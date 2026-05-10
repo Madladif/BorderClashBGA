@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Path \"$env:USERPROFILE\\\\.claude\\\\skills\" -Force | Out-Null; Write-Output \"Created: $env:USERPROFILE\\\\.claude\\\\skills\")",
+      "PowerShell(cd \"$env:USERPROFILE\\\\.claude\\\\skills\"; git clone https://github.com/rbellec/claude-code-bga.git 2>&1)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\.claude\\\\skills\\\\claude-code-bga\\\\\" -ErrorAction SilentlyContinue | Select-Object Name)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\.claude\\\\skills\\\\\" -Recurse -Depth 2 | Select-Object FullName)",
+      "Bash(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ChooseAction.php\")",
+      "PowerShell(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ChooseAction.php\")",
+      "Bash(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ChooseAction.php\")",
+      "Bash(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ResolveScheme.php\")",
+      "Bash(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\EndScore.php\")",
+      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ChooseAction.php\")",
+      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ResolveScheme.php\")",
+      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\EndScore.php\")",
+      "Bash(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\PlayerTurn.php\")",
+      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\PlayerTurn.php\")"
+    ]
+  }
+}
