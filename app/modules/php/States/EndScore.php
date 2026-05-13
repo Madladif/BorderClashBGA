@@ -22,14 +22,20 @@ class EndScore extends \Bga\GameFramework\States\GameState
         );
     }
 
-    /**
-     * Game state action, example content.
-     *
-     * The onEnteringState method of state `EndScore` is called just before the end of the game.
-     */
+    // Scores are accumulated live during play. Here we store the gem tiebreaker
+    // in player_score_aux so BGA's end-game screen can surface it.
+    // Rules: tied combat scores are broken by gems_charged (more = wins).
     public function onEnteringState()
     {
-        // Here, we would compute scores if they are not updated live, and compute average statistics
+        $players = $this->game->getCollectionFromDb("SELECT player_id FROM player");
+        foreach (array_keys($players) as $rawPid) {
+            $pid  = (int)$rawPid;
+            $gems = $this->game->gemsCharged->get($pid);
+            $this->game->DbQuery(
+                "UPDATE player SET player_score_aux = {$gems} WHERE player_id = {$pid}"
+            );
+            $this->game->bga->playerStats->set('gems_charged_at_end', $gems, $pid);
+        }
 
         return ST_END_GAME;
     }

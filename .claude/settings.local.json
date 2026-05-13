@@ -14,7 +14,27 @@
       "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\ResolveScheme.php\")",
       "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\EndScore.php\")",
       "Bash(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\PlayerTurn.php\")",
-      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\PlayerTurn.php\")"
+      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\La part du lion\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\PlayerTurn.php\")",
+      "Bash(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\Game.php\")",
+      "PowerShell(php -l \"c:\\\\Users\\\\BenjaminLEVA\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-�ditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\Game.php\")",
+      "Bash(php -l app/modules/php/States/Deploy.php)",
+      "Bash(php -l app/modules/php/States/RevealAndResolve.php)",
+      "Bash(php -l app/modules/php/Game.php)",
+      "Bash(php -l app/modules/php/States/Upgrade.php)",
+      "Bash(php -l app/modules/php/States/CheckTurn.php)",
+      "Bash(php -l app/modules/php/States/NextRound.php)",
+      "Bash(php -l app/modules/php/States/EndScore.php)",
+      "Bash(php -l app/modules/php/CardEffects.php)",
+      "Bash(where php *)",
+      "Bash(Get-Command php *)",
+      "Bash(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\Game.php\")",
+      "Bash(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\CardEffects.php\")",
+      "Bash(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\Deploy.php\")",
+      "Bash(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\RevealAndResolve.php\")",
+      "Bash(php -l \"c:\\\\OneDrive\\\\OneDrive - Merle Editions\\\\Documents partages - Merle-éditions\\\\Projets\\\\Border Clash\\\\Bga\\\\app\\\\modules\\\\php\\\\States\\\\Upgrade.php\")",
+      "Bash(node --input-type=module)",
+      "Bash(node.exe --version)",
+      "PowerShell(node --version 2>&1)"
     ]
   }
 }

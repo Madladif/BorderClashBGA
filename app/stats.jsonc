@@ -1,28 +1,59 @@
-{    
-    // Statistics for the table
-    "table": {},
-    
-    // Statistics for each player
+{
+    // Statistics for the table (shared across the game session)
+    "table": {
+        "rounds_played": {
+            "id": 10,
+            "name": "Number of rounds played",
+            "type": "int"
+        },
+        "total_turns": {
+            "id": 11,
+            "name": "Total turns played",
+            "type": "int"
+        }
+    },
+
+    // Statistics per player
     "player": {
-      /* 
-      EXAMPLE:
-
-      "turns_number": {
-        "id": 10,
-        "name": "Number of turns",
-        "type": "int"
-      },
-      "player_teststat1": {
-        "id": 11,
-        "name": "player test stat 1",
-        "type": "int"
-      },
-      "player_teststat2": {
-        "id": 12,
-        "name": "player test stat 2",
-        "type": "float"
-      }
-      */
-
+        "mulligans_used": {
+            "id": 20,
+            "name": "Mulligans used",
+            "type": "int"
+        },
+        "cards_upgraded": {
+            "id": 21,
+            "name": "Cards upgraded",
+            "type": "int"
+        },
+        "cards_produced": {
+            "id": 22,
+            "name": "Cards produced",
+            "type": "int"
+        },
+        "combat_wins": {
+            "id": 23,
+            "name": "Combats won",
+            "type": "int"
+        },
+        "combat_losses": {
+            "id": 24,
+            "name": "Combats lost",
+            "type": "int"
+        },
+        "combat_ties": {
+            "id": 25,
+            "name": "Combats tied",
+            "type": "int"
+        },
+        "combat_points": {
+            "id": 26,
+            "name": "Total combat points earned",
+            "type": "int"
+        },
+        "gems_charged_at_end": {
+            "id": 27,
+            "name": "Charged gems at end of game",
+            "type": "int"
+        }
     }
 }

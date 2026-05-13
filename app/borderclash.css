@@ -1,0 +1,357 @@
+/**
+ * BGA framework: Gregory Isabelli & Emmanuel Colin & BoardGameArena
+ * borderclash implementation : © Merle Editions
+ */
+
+/* ============================================================
+   Layout
+   ============================================================ */
+
+#bc-round-tracker {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    padding: 5px 12px;
+    background: #2c3e50;
+    color: #ecf0f1;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: bold;
+    width: fit-content;
+    margin-bottom: 12px;
+}
+
+#bc-players-area {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    align-items: flex-start;
+}
+
+#bc-shared-decks {
+    margin-top: 12px;
+    display: flex;
+    gap: 20px;
+    font-size: 12px;
+    color: #555;
+    padding: 6px 10px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    width: fit-content;
+}
+
+/* ============================================================
+   Player board
+   ============================================================ */
+
+.bc-player-board {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border: 2px solid #ccc;
+    border-radius: 6px;
+    padding: 8px;
+    background: #fafafa;
+}
+
+.bc-player-label {
+    font-weight: bold;
+    font-size: 13px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #eee;
+    white-space: nowrap;
+}
+
+/* ============================================================
+   Grid
+   ============================================================ */
+
+.bc-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 156px);
+    grid-template-rows: repeat(3, 117px);
+    gap: 4px;
+}
+
+.bc-cell {
+    width: 156px;
+    height: 117px;
+    border: 1px dashed #bbb;
+    border-radius: 4px;
+    background: #efefef;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.bc-cell-center {
+    border-color: #8888cc;
+    background: #f0f0ff;
+}
+
+.bc-cell-left,
+.bc-cell-right {
+    background: #f5f0e8;
+}
+
+/* ============================================================
+   Cards
+   ============================================================ */
+
+.bc-card {
+    width: 150px;
+    height: 111px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1.4;
+    text-align: center;
+    padding: 4px;
+    box-sizing: border-box;
+    user-select: none;
+}
+
+/* Rank color — used as solid background in non-sprite UI (upgrade info bar)
+   and as border accent + fallback bg on sprite cards */
+.bc-card-rank-1 {
+    background: #cd7f32;
+    border-color: #a06020;
+    color: #fff;
+}
+
+.bc-card-rank-2 {
+    background: #b0b0b0;
+    border-color: #888;
+    color: #222;
+}
+
+.bc-card-rank-3 {
+    background: #d4a800;
+    border-color: #a08000;
+    color: #333;
+}
+
+/* Sprite card — overrides rank solid bg with the sprite sheet image.
+   background-position is set via inline style (computed from type + type_arg + family).
+   Until img/cards_scoundrels.png exists, cards show as the rank solid color. */
+.bc-card-sprite {
+    background-image: url('img/cards_scoundrels.png');
+    background-size: 1950px 333px;  /* 13 cols × 3 rows at 150×111 display size */
+    background-repeat: no-repeat;
+}
+
+/* Face-down card back — gradient placeholder until sprite col 12 is available */
+.bc-card-hidden {
+    background: linear-gradient(150deg, #2c3e50 0%, #4a6278 100%);
+    color: #90a8b8;
+    font-style: italic;
+    font-size: 20px;
+    letter-spacing: 2px;
+}
+
+/* ============================================================
+   Hand area (persistent slot inside the current player's board)
+   ============================================================ */
+
+.bc-hand-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+    min-height: 0;
+}
+
+.bc-hand-area:not(:empty) {
+    border-top: 1px dashed #ccc;
+    margin-top: 4px;
+}
+
+/* ============================================================
+   Interactive cards (hand + draft)
+   ============================================================ */
+
+.bc-hand-card,
+.bc-draft-card {
+    cursor: pointer;
+    transition: box-shadow 0.1s, transform 0.1s;
+}
+
+.bc-hand-card:hover,
+.bc-draft-card:hover {
+    box-shadow: 0 0 0 2px #3498db;
+    transform: translateY(-2px);
+}
+
+.bc-card-selected {
+    box-shadow: 0 0 0 3px #27ae60 !important;
+    transform: translateY(-4px) !important;
+}
+
+/* ============================================================
+   Deploy UI
+   ============================================================ */
+
+#bc-deploy-ui {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+#bc-deploy-hint {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: #666;
+}
+
+#bc-deploy-slots {
+    display: flex;
+    gap: 10px;
+    margin: 6px 0 10px;
+}
+
+.bc-deploy-slot {
+    padding: 3px 8px;
+    background: #e0e0e0;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+#bc-gems-info {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #555;
+}
+
+/* Mulligan mode: hand cards pulse to signal selection */
+#bc-deploy-ui.bc-mulligan-mode .bc-hand-card {
+    box-shadow: 0 0 0 2px #e67e22;
+}
+
+/* ============================================================
+   Upgrade UI
+   ============================================================ */
+
+#bc-upgrade-ui {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+#bc-upgrade-ui > p {
+    margin: 0 0 8px;
+    font-size: 12px;
+}
+
+#bc-upgrade-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 8px;
+}
+
+.bc-upgrade-card {
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 8px;
+    background: #fff;
+    min-width: 180px;
+}
+
+.bc-upgrade-card-info {
+    font-size: 10px;
+    font-weight: bold;
+    padding: 4px 6px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+}
+
+.bc-upgrade-actions {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.bc-upgrade-actions button {
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    background: #efefef;
+    transition: background 0.1s;
+}
+
+.bc-upgrade-actions button:hover {
+    background: #ddd;
+}
+
+.bc-btn-active {
+    background: #2980b9 !important;
+    color: #fff !important;
+    border-color: #1a6a9a !important;
+}
+
+.bc-upgrade-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.bc-upgrade-option {
+    cursor: pointer;
+    transition: box-shadow 0.1s, transform 0.1s;
+}
+
+.bc-upgrade-option:hover {
+    box-shadow: 0 0 0 2px #e67e22;
+    transform: translateY(-2px);
+}
+
+.bc-option-selected {
+    box-shadow: 0 0 0 3px #27ae60 !important;
+}
+
+/* ============================================================
+   Gem display (inside player boards)
+   ============================================================ */
+
+.bc-player-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    padding-top: 4px;
+    border-top: 1px solid #eee;
+    color: #444;
+}
+
+/* ============================================================
+   Turn order marker
+   ============================================================ */
+
+.bc-first-player-marker {
+    display: inline-block;
+    margin-left: 5px;
+    color: #f1c40f;
+    font-size: 13px;
+}
+
+/* ============================================================
+   Combat & reveal animations
+   ============================================================ */
+
+.bc-card-loser {
+    opacity: 0.45;
+    transition: opacity 0.6s;
+}

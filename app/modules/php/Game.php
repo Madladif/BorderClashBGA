@@ -1,225 +1,436 @@
 <?php
 
+declare(strict_types=1);
+
 /**
- *------
  * BGA framework: Gregory Isabelli & Emmanuel Colin & BoardGameArena
- * dracoborderclashliath implementation : © <Your name here> <Your email address here>
+ * borderclash implementation : © Merle Editions
  *
  * This code has been produced on the BGA studio platform for use on http://boardgamearena.com.
  * See http://en.boardgamearena.com/#!doc/Studio for more information.
- * -----
- *
- * Game.php
- *
- * This is the main file for your game logic.
- *
- * In this PHP file, you are going to defines the rules of the game.
  */
-
-declare(strict_types=1);
 
 namespace Bga\Games\borderclash;
 
+use Bga\Games\borderclash\States\Deploy;
 use Bga\Games\borderclash\States\PlayerTurn;
+use Bga\Games\borderclash\States\SilverDraft;
+use Bga\Games\borderclash\States\SilverDraftNext;
 use Bga\GameFramework\Components\Counters\PlayerCounter;
 
 class Game extends \Bga\GameFramework\Table
 {
-    public static array $CARD_TYPES;
+    public PlayerCounter $gemsCharged;
+    public PlayerCounter $gemsUncharged;
 
-    public PlayerCounter $playerEnergy;
+    // Card rank constants (card_type)
+    public const RANK_BRONZE = 1;
+    public const RANK_SILVER = 2;
+    public const RANK_GOLD   = 3;
 
-    /**
-     * Your global variables labels:
-     *
-     * Here, you can assign labels to global variables you are using for this game. You can use any number of global
-     * variables with IDs between 10 and 99. If you want to store any type instead of int, use $this->globals instead.
-     *
-     * NOTE: afterward, you can get/set the global variables with `getGameStateValue`, `setGameStateInitialValue` or
-     * `setGameStateValue` functions.
-     */
+    // Card family constants (card_family)
+    public const FAMILY_GAMBLER = 1;
+    public const FAMILY_BRUTE   = 2;
+    public const FAMILY_PIRATE  = 3;
+
     public function __construct()
     {
         parent::__construct();
 
-        $this->playerEnergy = $this->bga->counterFactory->createPlayerCounter('energy');
-
-        self::$CARD_TYPES = [
-            1 => [
-                "card_name" => clienttranslate('Troll'), // ...
-            ],
-            2 => [
-                "card_name" => clienttranslate('Goblin'), // ...
-            ],
-            // ...
-        ];
-
-        /* example of notification decorator.
-        // automatically complete notification args when needed
-        $this->bga->notify->addDecorator(function(string $message, array $args) {
-            if (isset($args['player_id']) && !isset($args['player_name']) && str_contains($message, '${player_name}')) {
-                $args['player_name'] = $this->getPlayerNameById($args['player_id']);
-            }
-        
-            if (isset($args['card_id']) && !isset($args['card_name']) && str_contains($message, '${card_name}')) {
-                $args['card_name'] = self::$CARD_TYPES[$args['card_id']]['card_name'];
-                $args['i18n'][] = ['card_name'];
-            }
-            
-            return $args;
-        });*/
+        $this->gemsCharged   = $this->bga->counterFactory->createPlayerCounter('gems_charged');
+        $this->gemsUncharged = $this->bga->counterFactory->createPlayerCounter('gems_uncharged');
     }
 
-    /**
-     * Compute and return the current game progression.
-     *
-     * The number returned must be an integer between 0 and 100.
-     *
-     * This method is called each time we are in a game state with the "updateGameProgression" property set to true.
-     *
-     * @return int
-     */
-    public function getGameProgression()
+    // -------------------------------------------------------------------------
+    // Game progression
+    // -------------------------------------------------------------------------
+
+    public function getGameProgression(): int
     {
-        // TODO: compute and return the game progression
-
-        return 0;
+        $round = (int)($this->bga->globals->get('round_number') ?? 1);
+        $turn  = (int)($this->bga->globals->get('turn_number')  ?? 1);
+        return ($round - 1) * 25 + ($turn - 1) * 8;
     }
 
-    /**
-     * Migrate database.
-     *
-     * You don't have to care about this until your game has been published on BGA. Once your game is on BGA, this
-     * method is called everytime the system detects a game running with your old database scheme. In this case, if you
-     * change your database scheme, you just have to apply the needed changes in order to update the game database and
-     * allow the game to continue to run with your new version.
-     *
-     * @param int $from_version
-     * @return void
-     */
-    public function upgradeTableDb($from_version)
-    {
-        //       if ($from_version <= 1404301345)
-        //       {
-        //            // ! important ! Use `DBPREFIX_<table_name>` for all tables
-        //
-        //            $sql = "ALTER TABLE `DBPREFIX_xxxxxxx` ....";
-        //            $this->applyDbUpgradeToAllDB( $sql );
-        //       }
-        //
-        //       if ($from_version <= 1405061421)
-        //       {
-        //            // ! important ! Use `DBPREFIX_<table_name>` for all tables
-        //
-        //            $sql = "CREATE TABLE `DBPREFIX_xxxxxxx` ....";
-        //            $this->applyDbUpgradeToAllDB( $sql );
-        //       }
-    }
+    // -------------------------------------------------------------------------
+    // getAllDatas — called on page load and F5
+    // -------------------------------------------------------------------------
 
-    /*
-     * Gather all information about current game situation (visible by the current player).
-     *
-     * The method is called each time the game interface is displayed to a player, i.e.:
-     *
-     * - when the game starts
-     * - when a player refreshes the game page (F5)
-     */
     protected function getAllDatas(int $currentPlayerId): array
     {
         $result = [];
-        // WARNING: We must only return information visible by the current player (using $currentPlayerId).
+        $pid    = (int)$currentPlayerId;
 
-        // Get information about players.
-        // NOTE: you can retrieve some extra field you added for "player" table in `dbmodel.sql` if you need it.
-        $result["players"] = $this->getCollectionFromDb(
-            "SELECT `player_id` AS `id`, `player_score` AS `score` FROM `player`"
+        // Base player info + rage marker
+        $result['players'] = $this->getCollectionFromDb(
+            "SELECT player_id AS id, player_score AS score, player_rage AS rage FROM player"
         );
-        $this->playerEnergy->fillResult($result);
 
-        // TODO: Gather all information about current game situation (visible by player $currentPlayerId).
+        // Gem counters — fillResult merges 'gems_charged'/'gems_uncharged' into player data
+        $this->gemsCharged->fillResult($result);
+        $this->gemsUncharged->fillResult($result);
+
+        // Current player's hand (private — full card data, face visible)
+        $result['hand'] = array_values($this->getCollectionFromDb(
+            "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+             FROM bc_card
+             WHERE card_location = 'hand' AND card_location_arg = {$pid}"
+        ));
+
+        // Silver draft hand (private — only populated during the initial draft state)
+        $result['draft_cards'] = array_values($this->getCollectionFromDb(
+            "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+             FROM bc_card
+             WHERE card_location = 'draft' AND card_location_arg = {$pid}"
+        ));
+        $result['draft_round'] = (int)($this->bga->globals->get('draft_round') ?? 0);
+
+        // Solo mode extras
+        $isSolo = (bool)($this->bga->globals->get('is_solo') ?? false);
+        $result['is_solo'] = $isSolo;
+        if ($isSolo) {
+            $result['bot_score']      = (int)($this->bga->globals->get('bot_score')      ?? 0);
+            $result['bot_difficulty'] = (int)($this->bga->globals->get('bot_difficulty') ?? 0);
+
+            $botGridCards = [];
+            foreach (['bot_grid_left', 'bot_grid_right'] as $loc) {
+                $rows = $this->getCollectionFromDb(
+                    "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg,
+                            card_family AS family, card_location_arg AS row, card_face_up AS face_up
+                     FROM bc_card WHERE card_location = '{$loc}'"
+                );
+                foreach ($rows as $card) {
+                    $entry = [
+                        'id'      => (int)$card['id'],
+                        'side'    => $loc === 'bot_grid_left' ? 'left' : 'right',
+                        'row'     => (int)$card['row'],
+                        'face_up' => (int)$card['face_up'],
+                        'type'    => null, 'type_arg' => null, 'family' => null,
+                    ];
+                    if ((int)$card['face_up']) {
+                        $entry['type']     = (int)$card['type'];
+                        $entry['type_arg'] = (int)$card['type_arg'];
+                        $entry['family']   = (int)$card['family'];
+                    }
+                    $botGridCards[] = $entry;
+                }
+            }
+            $result['bot_grid_cards'] = $botGridCards;
+        }
+
+        // All deployed grid cards (public — type hidden when face-down; critical visibility rule)
+        $gridCards = $this->getCollectionFromDb(
+            "SELECT card_id AS id, card_location, card_location_arg AS position,
+                    card_face_up AS face_up, card_type AS type, card_type_arg AS type_arg,
+                    card_family AS family
+             FROM bc_card
+             WHERE card_location LIKE 'grid_%'"
+        );
+        foreach ($gridCards as &$card) {
+            if (!(int)$card['face_up']) {
+                $card['type']     = null;
+                $card['type_arg'] = null;
+                $card['family']   = null;
+            }
+        }
+        unset($card);
+        $result['grid_cards'] = array_values($gridCards);
+
+        // Shared pile sizes (Bronze / Silver / Gold)
+        $sharedRows = $this->getCollectionFromDb(
+            "SELECT card_location, COUNT(*) AS cnt FROM bc_card
+             WHERE card_location IN ('shared_bronze', 'shared_silver', 'shared_gold')
+             GROUP BY card_location"
+        );
+        $result['deck_sizes'] = [
+            'bronze' => (int)($sharedRows['shared_bronze']['cnt'] ?? 0),
+            'silver' => (int)($sharedRows['shared_silver']['cnt'] ?? 0),
+            'gold'   => (int)($sharedRows['shared_gold']['cnt']   ?? 0),
+        ];
+
+        // Personal deck sizes — all players (UI shows deck stack depth)
+        $result['personal_deck_sizes'] = [];
+        foreach (array_keys($result['players']) as $playerId) {
+            $result['personal_deck_sizes'][(int)$playerId] = 0;
+        }
+        $personalRows = $this->getCollectionFromDb(
+            "SELECT card_location_arg AS player_id, COUNT(*) AS cnt FROM bc_card
+             WHERE card_location = 'deck'
+             GROUP BY card_location_arg"
+        );
+        foreach ($personalRows as $key => $row) {
+            $result['personal_deck_sizes'][(int)$key] = (int)$row['cnt'];
+        }
+
+        // Round / turn / turn-order globals
+        $result['round_number']        = (int)($this->bga->globals->get('round_number')        ?? 1);
+        $result['turn_number']         = (int)($this->bga->globals->get('turn_number')         ?? 1);
+        $result['turn_order_start_id'] = (int)($this->bga->globals->get('turn_order_start_id') ?? 0);
+        $result['player_order']        = $this->bga->globals->get('player_order') ?? [];
 
         return $result;
     }
 
-    /**
-     * This method is called only once, when a new game is launched. In this method, you must setup the game
-     *  according to the game rules, so that the game is ready to be played.
-     */
+    // -------------------------------------------------------------------------
+    // setupNewGame — called once when a new game is launched
+    // -------------------------------------------------------------------------
+
     protected function setupNewGame($players, $options = [])
     {
-        $this->playerEnergy->initDb(array_keys($players), initialValue: 2);
+        
+        try {
+        // Gem counters: 1 charged + 2 uncharged = 3 gems per player
+        $this->gemsCharged->initDb(array_keys($players), 1);
+        $this->gemsUncharged->initDb(array_keys($players), 2);
 
-        // Set the colors of the players with HTML color code. The default below is red/green/blue/orange/brown. The
-        // number of colors defined here must correspond to the maximum number of players allowed for the gams.
-        $gameinfos = $this->getGameinfos();
-        $default_colors = $gameinfos['player_colors'];
-
-        foreach ($players as $player_id => $player) {
-            // Now you can access both $player_id and $player array
-            $query_values[] = vsprintf("(%s, '%s', '%s')", [
-                $player_id,
-                array_shift($default_colors),
-                addslashes($player["player_name"]),
+        // Insert players with assigned colors
+        $gameinfos     = $this->getGameinfos();
+        $defaultColors = $gameinfos['player_colors'];
+        $queryValues   = [];
+        foreach ($players as $playerId => $player) {
+            $queryValues[] = vsprintf("(%s, '%s', '%s')", [
+                $playerId,
+                array_shift($defaultColors),
+                addslashes($player['player_name']),
             ]);
         }
-
-        // Create players based on generic information.
-        //
-        // NOTE: You can add extra field on player table in the database (see dbmodel.sql) and initialize
-        // additional fields directly here.
-        static::DbQuery(
-            sprintf(
-                "INSERT INTO `player` (`player_id`, `player_color`, `player_name`) VALUES %s",
-                implode(",", $query_values)
-            )
-        );
-
-        $this->reattributeColorsBasedOnPreferences($players, $gameinfos["player_colors"]);
+        
+        static::DbQuery(sprintf(
+            "INSERT INTO `player` (`player_id`, `player_color`, `player_name`) VALUES %s",
+            implode(',', $queryValues)
+        ));
+        $this->reattributeColorsBasedOnPreferences($players, $gameinfos['player_colors']);
         $this->reloadPlayersBasicInfos();
 
-        // Init global values with their initial values.
+        // Create all 78 cards in their shared piles
+        $this->createAllCards();
 
-        // Init game statistics.
-        //
-        // NOTE: statistics used in this file must be defined in your `stats.inc.php` file.
+        // Give each player 1 copy of every Bronze design (6 cards each)
+        $this->distributeBronzeCards($players);
 
-        // Dummy content.
-        // $this->tableStats->init('table_teststat1', 0);
-        // $this->playerStats->init('player_teststat1', 0);
+        // Solo vs multiplayer Silver setup
+        $isSolo     = count($players) === 1;
+        $difficulty = $isSolo ? (int)($options['100'] ?? 0) : 0;
 
-        // TODO: Setup the initial game situation here.
+        if ($isSolo) {
+            $pid = (int)array_key_first($players);
+            // Solo: draw 5 Silver, keep 3 (simplified: random 3 kept; no draft)
+            $this->setupSoloPlayerSilver($pid);
+            $this->setupBot($difficulty);
+        } else {
+            // Multiplayer: deal 3 Silver to each player's draft hand; draft state handles picking
+            $this->dealInitialDraftCards($players);
+        }
 
-        // Activate first player once everything has been initialized and ready.
-        $this->activeNextPlayer();
+        // Pick first player randomly and build anticlockwise play order
+        $playerIds    = array_keys($players);
+        $firstId      = (int)$playerIds[array_rand($playerIds)];
 
-        return PlayerTurn::class;
+        // getCollectionFromDb keyed by player_id, but ORDER BY player_no preserved in PHP array
+        $playersInfo  = $this->getCollectionFromDb(
+            "SELECT player_id, player_no FROM player ORDER BY player_no ASC"
+        );
+        $orderedPids  = array_map('intval', array_keys($playersInfo));
+        $firstIdx     = array_search($firstId, $orderedPids, true);
+        if ($firstIdx === false) {
+            $firstIdx = 0;
+        }
+        $count        = count($orderedPids);
+        $playerOrder  = [];
+        for ($i = 0; $i < $count; $i++) {
+            $playerOrder[] = $orderedPids[($firstIdx + $i) % $count];
+        }
+
+        $this->bga->globals->set('round_number',        1);
+        $this->bga->globals->set('turn_number',         1);
+        $this->bga->globals->set('turn_order_start_id', $firstId);
+        $this->bga->globals->set('player_order',        $playerOrder);
+        $this->bga->globals->set('current_combat_idx',  0);
+        $this->bga->globals->set('is_solo',             $isSolo ? 1 : 0);
+        if ($isSolo) {
+            $this->bga->globals->set('bot_score',      0);
+            $this->bga->globals->set('bot_difficulty', $difficulty);
+            $this->bga->globals->set('bot_rage',       0);
+        } else {
+            $this->bga->globals->set('draft_round', 0);
+        }
+        
+        return $isSolo ? Deploy::class : SilverDraftNext::class;
+        } catch (\Throwable $t) {
+            throw new \Exception(
+                'Setup failed: ' . $t->getMessage()
+                . ' in ' . $t->getFile() . ':' . $t->getLine(),
+                0, $t
+            );
+        }
     }
 
-    /**
-     * Example of debug function.
-     * Here, jump to a state you want to test (by default, jump to next player state)
-     * You can trigger it on Studio using the Debug button on the right of the top bar.
-     */
-    public function debug_goToState(int $state = 3)
+    // -------------------------------------------------------------------------
+    // DB migration (used post-publication only)
+    // -------------------------------------------------------------------------
+
+    public function upgradeTableDb($from_version)
+    {
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers — card setup
+    // -------------------------------------------------------------------------
+
+    private function createAllCards(): void
+    {
+        $values = [];
+
+        // Bronze: 9 designs × 4 copies. Family: designs 1-3=Gambler, 4-6=Brute, 7-9=Pirate
+        for ($design = 1; $design <= 9; $design++) {
+            $family = (int)ceil($design / 3);
+            for ($copy = 0; $copy < 4; $copy++) {
+                $values[] = "(1, {$design}, {$family}, 'shared_bronze', 0, 0)";
+            }
+        }
+
+        // Silver: 18 designs × 2 copies. Family: designs 1-6=Gambler, 7-12=Brute, 13-18=Pirate
+        for ($design = 1; $design <= 18; $design++) {
+            $family = (int)ceil($design / 6);
+            for ($copy = 0; $copy < 2; $copy++) {
+                $values[] = "(2, {$design}, {$family}, 'shared_silver', 0, 0)";
+            }
+        }
+
+        // Gold: 9 designs × 2 copies. Family: designs 1-3=Gambler, 4-6=Brute, 7-9=Pirate
+        for ($design = 1; $design <= 9; $design++) {
+            $family = (int)ceil($design / 3);
+            for ($copy = 0; $copy < 2; $copy++) {
+                $values[] = "(3, {$design}, {$family}, 'shared_gold', 0, 0)";
+            }
+        }
+
+        static::DbQuery(
+            "INSERT INTO bc_card (card_type, card_type_arg, card_family, card_location, card_location_arg, card_face_up) VALUES "
+            . implode(',', $values)
+        );
+    }
+
+    private function distributeBronzeCards(array $players): void
+    {
+        foreach (array_keys($players) as $playerId) {
+            $pid = (int)$playerId;
+            for ($design = 1; $design <= 9; $design++) {
+                $rows = $this->getCollectionFromDb(
+                    "SELECT card_id FROM bc_card
+                     WHERE card_type = 1 AND card_type_arg = {$design}
+                       AND card_location = 'shared_bronze'
+                     LIMIT 1"
+                );
+                if (empty($rows)) {
+                    throw new \RuntimeException("Not enough Bronze cards for design {$design}");
+                }
+                $cardId = (int)array_key_first($rows);
+                static::DbQuery(
+                    "UPDATE bc_card
+                     SET card_location = 'deck', card_location_arg = {$pid}
+                     WHERE card_id = {$cardId}"
+                );
+            }
+        }
+    }
+
+    private function setupSoloPlayerSilver(int $playerId): void
+    {
+        // Draw 5 Silver, keep 3 (simplified: random 3 kept; draft UI deferred)
+        $drawn = $this->getCollectionFromDb(
+            "SELECT card_id FROM bc_card
+             WHERE card_location = 'shared_silver'
+             ORDER BY RAND() LIMIT 5"
+        );
+        if (count($drawn) < 3) {
+            throw new \RuntimeException("Not enough Silver cards for solo player");
+        }
+        $keptIds = array_slice(array_map('intval', array_keys($drawn)), 0, 3);
+        $keptStr = implode(',', $keptIds);
+        static::DbQuery(
+            "UPDATE bc_card SET card_location = 'deck', card_location_arg = {$playerId}
+             WHERE card_id IN ({$keptStr})"
+        );
+    }
+
+    private function setupBot(int $difficulty): void
+    {
+        // difficulty 0=6B, 1=4B+2S, 2=2B+4S, 3=6S
+        $silverCount = $difficulty * 2;
+        $bronzeCount = 6 - $silverCount;
+
+        // Give bot one copy of each Bronze design, shuffled, taking $bronzeCount
+        $bronzeDesigns = range(1, 6);
+        shuffle($bronzeDesigns);
+        foreach (array_slice($bronzeDesigns, 0, $bronzeCount) as $design) {
+            $row = $this->getObjectFromDB(
+                "SELECT card_id FROM bc_card
+                 WHERE card_type = 1 AND card_type_arg = {$design}
+                   AND card_location = 'shared_bronze'
+                 LIMIT 1"
+            );
+            if (empty($row)) {
+                throw new \RuntimeException("Not enough Bronze cards for bot (design {$design})");
+            }
+            $cid = (int)$row['card_id'];
+            static::DbQuery(
+                "UPDATE bc_card
+                 SET card_location = 'bot_deck', card_location_arg = 0
+                 WHERE card_id = {$cid}"
+            );
+        }
+
+        if ($silverCount > 0) {
+            $rows = $this->getCollectionFromDb(
+                "SELECT card_id FROM bc_card
+                 WHERE card_location = 'shared_silver'
+                 ORDER BY RAND() LIMIT {$silverCount}"
+            );
+            if (count($rows) < $silverCount) {
+                throw new \RuntimeException("Not enough Silver cards for bot");
+            }
+            $ids = implode(',', array_map('intval', array_keys($rows)));
+            static::DbQuery(
+                "UPDATE bc_card SET card_location = 'bot_deck', card_location_arg = 0
+                 WHERE card_id IN ({$ids})"
+            );
+        }
+    }
+
+    // Deal 3 Silver cards per player to the 'draft' location for the initial Silver draft.
+    private function dealInitialDraftCards(array $players): void
+    {
+        foreach (array_keys($players) as $playerId) {
+            $pid  = (int)$playerId;
+            $rows = $this->getCollectionFromDb(
+                "SELECT card_id FROM bc_card
+                 WHERE card_location = 'shared_silver'
+                 ORDER BY RAND() LIMIT 3"
+            );
+            if (count($rows) < 3) {
+                throw new \RuntimeException("Not enough Silver cards for draft (player {$pid})");
+            }
+            $cardIds = implode(',', array_map('intval', array_keys($rows)));
+            static::DbQuery(
+                "UPDATE bc_card
+                 SET card_location = 'draft', card_location_arg = {$pid}
+                 WHERE card_id IN ({$cardIds})"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug helpers (remove before release)
+    // -------------------------------------------------------------------------
+
+    public function debug_goToState(int $state = 10): void
     {
         $this->gamestate->jumpToState($state);
     }
 
-    /**
-     * Another example of debug function, to easily test the zombie code.
-     */
-    public function debug_playOneMove()
+    public function debug_playOneMove(): void
     {
         $this->bga->debug->playUntil(fn(int $count) => $count == 1);
     }
-
-    /*
-    Another example of debug function, to easily create situations you want to test.
-    Here, put a card you want to test in your hand (assuming you use the Deck component).
-
-    public function debug_setCardInHand(int $cardType, int $playerId) {
-        $card = array_values($this->cards->getCardsOfType($cardType))[0];
-        $this->cards->moveCard($card['id'], 'hand', $playerId);
-    }
-    */
 }

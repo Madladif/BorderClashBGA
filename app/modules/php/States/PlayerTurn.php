@@ -17,7 +17,7 @@ class PlayerTurn extends GameState
     ) {
         parent::__construct(
             $game,
-            id: 10,
+            id: 95, // scaffold placeholder — replaced by Deploy (id 10); kept to avoid deletion
             type: StateType::ACTIVE_PLAYER,
         );
     }
