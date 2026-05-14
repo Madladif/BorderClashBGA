@@ -6,15 +6,15 @@ All assets go in `app/img/`. PNG sprites for cards, gems, components, boards.
 
 ## Sprite sheet summary
 
-| File                       | Grid       | Cell size   | Total size   | Status  |
-| -------------------------- | ---------- | ----------- | ------------ | ------- |
-| `cards_scoundrels.png`     | 13 × 3     | 300 × 222 px | 3900 × 666 px | Pending |
-| `gems.png`                 | 4 × 2      | 300 × 300 px | 1200 × 600 px | Pending |
-| `components_scoundrels.png`| 12 × 2     | 300 × 300 px | 3600 × 600 px | Pending |
-| `boards.png`               | 7 × 1      | 900 × 600 px | 6300 × 600 px | Pending |
+| File                       | Grid       | Cell size (native 2×) | Total size (native 2×) | Display size | Status  |
+| -------------------------- | ---------- | --------------------- | ---------------------- | ------------ | ------- |
+| `cards_scoundrels.png`     | 12 × 3     | 334 × 238 px          | 4008 × 714 px          | 167 × 119 px | Pending |
+| `gems.png`                 | 4 × 2      | 300 × 300 px          | 1200 × 600 px          | 40 × 40 px   | Pending |
+| `components_scoundrels.png`| 12 × 2     | 300 × 300 px          | 3600 × 600 px          | TBC          | Pending |
+| `boards.png`               | 7 × 1      | 900 × 600 px          | 6300 × 600 px          | TBC          | Pending |
 
-> Cards are delivered at **2× display size** (retina). CSS uses `background-size: 1950px 333px`
-> to scale the 3900 × 666 sprite down to the 150 × 111 display size.
+> Cards are delivered at **2× display size** (retina). CSS uses `background-size: 1547px 501px`
+> to scale the 3094 × 1002 native sprite down to the 119 × 167 display size.
 
 ---
 
@@ -26,17 +26,16 @@ Each cell = one unique card face (300 × 222 px). Columns are shared across all 
 | --- | --------------------------------------------- | ------ |
 | 1   | Family bronze design 1  (4 copies in game)    | Bronze |
 | 2   | Family bronze design 2  (4 copies in game)    | Bronze |
-| 3   | Family bronze design 3  (4 copies in game)    | Bronze |
-| 4   | Family silver design 1  (2 copies in game)    | Silver |
-| 5   | Family silver design 2  (2 copies in game)    | Silver |
-| 6   | Family silver design 3  (2 copies in game)    | Silver |
-| 7   | Family silver design 4  (2 copies in game)    | Silver |
-| 8   | Family silver design 5  (2 copies in game)    | Silver |
-| 9   | Family silver design 6  (2 copies in game)    | Silver |
-| 10  | Family gold design 1    (2 copies in game)    | Gold   |
-| 11  | Family gold design 2    (2 copies in game)    | Gold   |
-| 12  | Family gold design 3    (2 copies in game)    | Gold   |
-| 13  | Card back               (same for all rows)   | —      |
+| 3   | Family silver design 1  (2 copies in game)    | Silver |
+| 4   | Family silver design 2  (2 copies in game)    | Silver |
+| 5   | Family silver design 3  (2 copies in game)    | Silver |
+| 6   | Family silver design 4  (2 copies in game)    | Silver |
+| 7   | Family silver design 5  (2 copies in game)    | Silver |
+| 8   | Family silver design 6  (2 copies in game)    | Silver |
+| 9   | Family gold design 1    (2 copies in game)    | Gold   |
+| 10  | Family gold design 2    (2 copies in game)    | Gold   |
+| 11  | Family gold design 3    (2 copies in game)    | Gold   |
+| 12  | Card back               (same for all rows)   | —      |
 
 | Row | Family  |
 | --- | ------- |
@@ -46,39 +45,39 @@ Each cell = one unique card face (300 × 222 px). Columns are shared across all 
 
 ### CSS sprite formula
 
-Display size: **150 × 111 px** per card.
+Display size: **167 × 119 px** per card (landscape). Native sprite cells: **334 × 238 px** (2× retina).
 
 ```css
 .bc-card-sprite {
   background-image: url('img/cards_scoundrels.png');
-  background-size: 1950px 333px;   /* 13 × 150, 3 × 111 */
+  background-size: 2004px 357px;   /* 12 × 167, 3 × 119 */
   background-repeat: no-repeat;
 }
 ```
 
 Position for a card with `family` (1–3) and column `C` (0-indexed):
 ```
-background-position-x: -(C * 150) px
-background-position-y: -((family - 1) * 111) px
+background-position-x: -(C * 167) px
+background-position-y: -((family - 1) * 119) px
 ```
 
 Column `C` from game data (`type` = rank 1/2/3, `type_arg` = global design number):
 ```
-Bronze (type=1): C = (type_arg - 1) % 3          → 0, 1, 2
-Silver (type=2): C = 3 + (type_arg - 1) % 6      → 3 … 8
-Gold   (type=3): C = 9 + (type_arg - 1) % 3      → 9, 10, 11
-Back (face-down): C = 12                           → 12
+Bronze (type=1): C = (type_arg - 1) % 2          → 0, 1
+Silver (type=2): C = 2 + (type_arg - 1) % 6      → 2 … 7
+Gold   (type=3): C = 8 + (type_arg - 1) % 3      → 8, 9, 10
+Back (face-down): C = 11                           → 11
 ```
 
-### DB card counts (after change to 3 bronze designs per family)
+### DB card counts
 
 | Rank   | Designs | Copies | Total cards |
 | ------ | ------- | ------ | ----------- |
-| Bronze | 9 (3 × 3 families) | 4 | 36 |
+| Bronze | 6 (2 × 3 families) | 4 | 24 |
 | Silver | 18 (6 × 3 families) | 2 | 36 |
 | Gold   | 9 (3 × 3 families)  | 2 | 18 |
 
-Each player starts with 1 copy of each of the 9 bronze designs (9 cards) + 2 silver cards from the draft = 11 cards in their starting deck.
+Each player starts with 1 copy of each of the 6 bronze designs (6 cards) + 2 silver cards from the draft = 8 cards in their starting deck.
 
 ---
 

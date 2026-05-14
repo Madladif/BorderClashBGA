@@ -77,6 +77,14 @@ class Game extends \Bga\GameFramework\Table
              WHERE card_location = 'hand' AND card_location_arg = {$pid}"
         ));
 
+        // Current player's personal deck (for Silver draft fan; private)
+        $result['deck_cards'] = array_values($this->getCollectionFromDb(
+            "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+             FROM bc_card
+             WHERE card_location = 'deck' AND card_location_arg = {$pid}
+             ORDER BY card_type ASC, card_type_arg ASC"
+        ));
+
         // Silver draft hand (private — only populated during the initial draft state)
         $result['draft_cards'] = array_values($this->getCollectionFromDb(
             "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
@@ -281,9 +289,9 @@ class Game extends \Bga\GameFramework\Table
     {
         $values = [];
 
-        // Bronze: 9 designs × 4 copies. Family: designs 1-3=Gambler, 4-6=Brute, 7-9=Pirate
-        for ($design = 1; $design <= 9; $design++) {
-            $family = (int)ceil($design / 3);
+        // Bronze: 6 designs × 4 copies. Family: designs 1-2=Gambler, 3-4=Brute, 5-6=Pirate
+        for ($design = 1; $design <= 6; $design++) {
+            $family = (int)ceil($design / 2);
             for ($copy = 0; $copy < 4; $copy++) {
                 $values[] = "(1, {$design}, {$family}, 'shared_bronze', 0, 0)";
             }
@@ -315,7 +323,7 @@ class Game extends \Bga\GameFramework\Table
     {
         foreach (array_keys($players) as $playerId) {
             $pid = (int)$playerId;
-            for ($design = 1; $design <= 9; $design++) {
+            for ($design = 1; $design <= 6; $design++) {
                 $rows = $this->getCollectionFromDb(
                     "SELECT card_id FROM bc_card
                      WHERE card_type = 1 AND card_type_arg = {$design}

@@ -18,7 +18,9 @@ class Deploy extends GameState
     }
 
     // Draw 3 cards from each player's deck to their hand when the state is entered.
-    // Idempotent: skips any player whose hand is already non-empty (handles re-entry).
+    // Idempotent: skips draw if hand is already non-empty (handles page reload).
+    // Always sends a private handDealt notification so the client gets the hand reliably,
+    // even when BGA's MULTIPLE_ACTIVE_PLAYER private args are not forwarded correctly.
     // In solo mode, also places all 6 bot cards face-down at the start of each round.
     public function onEnteringState()
     {
@@ -27,26 +29,43 @@ class Deploy extends GameState
         $players = $this->game->getCollectionFromDb("SELECT player_id FROM player");
         foreach (array_keys($players) as $playerId) {
             $pid      = (int)$playerId;
+
+            // Draw cards only if hand is empty (idempotent on reload)
             $countRow = $this->game->getObjectFromDB(
                 "SELECT COUNT(*) AS cnt FROM bc_card
                  WHERE card_location = 'hand' AND card_location_arg = {$pid}"
             );
-            if ((int)($countRow['cnt'] ?? 0) !== 0) {
-                continue;
+            if ((int)($countRow['cnt'] ?? 0) === 0) {
+                $rows = $this->game->getCollectionFromDb(
+                    "SELECT card_id FROM bc_card
+                     WHERE card_location = 'deck' AND card_location_arg = {$pid}
+                     ORDER BY RAND() LIMIT 3"
+                );
+                if (!empty($rows)) {
+                    $cardIds = implode(',', array_map('intval', array_keys($rows)));
+                    $this->game->DbQuery(
+                        "UPDATE bc_card SET card_location = 'hand'
+                         WHERE card_id IN ({$cardIds})"
+                    );
+                }
             }
-            $rows = $this->game->getCollectionFromDb(
-                "SELECT card_id FROM bc_card
-                 WHERE card_location = 'deck' AND card_location_arg = {$pid}
-                 ORDER BY RAND() LIMIT 3"
+
+            // Private: push hand + deck count directly to each player.
+            // This is the reliable delivery path — getArgs private args may not fire
+            // for all MULTIPLE_ACTIVE_PLAYER entries in the BGA SDK.
+            $handData = $this->game->getCollectionFromDb(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+                 FROM bc_card WHERE card_location = 'hand' AND card_location_arg = {$pid}"
             );
-            if (empty($rows)) {
-                continue;
-            }
-            $cardIds = implode(',', array_map('intval', array_keys($rows)));
-            $this->game->DbQuery(
-                "UPDATE bc_card SET card_location = 'hand'
-                 WHERE card_id IN ({$cardIds})"
-            );
+            $deckCount = (int)(($this->game->getObjectFromDB(
+                "SELECT COUNT(*) AS cnt FROM bc_card
+                 WHERE card_location = 'deck' AND card_location_arg = {$pid}"
+            ))['cnt'] ?? 0);
+            $this->game->bga->notify->player($pid, 'handDealt', '', [
+                'hand'         => array_values($handData),
+                'deck_count'   => $deckCount,
+                'gems_charged' => (int)$this->game->gemsCharged->get($pid),
+            ]);
         }
 
         // Solo: distribute bot cards at the start of each round (turn == 1 only)
@@ -170,7 +189,8 @@ class Deploy extends GameState
             ],
         ]);
 
-        return RevealAndResolve::class;
+        // Mark this player done; transition fires only when all players are non-active.
+        $this->gamestate->setPlayerNonMultiactive($pid, RevealAndResolve::class);
     }
 
     // Spend 1 charged gem: return a hand card to the deck, draw a replacement.
@@ -282,6 +302,6 @@ class Deploy extends GameState
             ],
         ]);
 
-        return RevealAndResolve::class;
+        $this->gamestate->setPlayerNonMultiactive($pid, RevealAndResolve::class);
     }
 }

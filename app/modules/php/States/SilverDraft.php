@@ -36,13 +36,18 @@ class SilverDraft extends \Bga\GameFramework\States\GameState
                 "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
                  FROM bc_card WHERE card_location = 'draft' AND card_location_arg = {$currentPlayerId}"
             )),
+            'deck_cards' => array_values($this->game->getCollectionFromDb(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+                 FROM bc_card WHERE card_location = 'deck' AND card_location_arg = {$currentPlayerId}
+                 ORDER BY card_type ASC, card_type_arg ASC"
+            )),
             'draft_round' => $draftRound,
         ];
     }
 
-    // Keep 1 card, pass the rest left.
+    // Keep 1 card; remaining cards stay in 'draft' until all players pick (SilverDraftNext passes them).
     #[PossibleAction]
-    public function actPickSilver(int $keptCardId): string
+    public function actPickSilver(int $keptCardId): void
     {
         $pid = (int)$this->game->getCurrentPlayerId();
 
@@ -62,16 +67,19 @@ class SilverDraft extends \Bga\GameFramework\States\GameState
              WHERE card_id = {$keptCardId}"
         );
 
-        // Pass remaining cards left (still in 'draft' location; only arg changes)
-        $remaining = array_values(array_diff($draftCardIds, [$keptCardId]));
-        if (!empty($remaining)) {
-            $leftId       = $this->getLeftNeighborId($pid);
-            $remainingStr = implode(',', $remaining);
-            $this->game->DbQuery(
-                "UPDATE bc_card SET card_location_arg = {$leftId}
-                 WHERE card_id IN ({$remainingStr})"
-            );
-        }
+        // Private: tell the player which card they kept (for deck-fan update)
+        $keptCard = $this->game->getObjectFromDB(
+            "SELECT card_type AS type, card_type_arg AS type_arg, card_family AS family
+             FROM bc_card WHERE card_id = {$keptCardId}"
+        );
+        $this->game->bga->notify->player($pid, 'silverCardKept', '', [
+            'card' => [
+                'id'       => (int)$keptCardId,
+                'type'     => (int)$keptCard['type'],
+                'type_arg' => (int)$keptCard['type_arg'],
+                'family'   => (int)$keptCard['family'],
+            ],
+        ]);
 
         $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
         $this->game->bga->notify->all('silverDraftPicked',
@@ -83,11 +91,12 @@ class SilverDraft extends \Bga\GameFramework\States\GameState
             ]
         );
 
-        return SilverDraftNext::class;
+        // Mark done; when all players are done, transition to SilverDraftNext.
+        $this->gamestate->setPlayerNonMultiactive($pid, SilverDraftNext::class);
     }
 
     // Auto-pick first available card for a disconnected player.
-    public function zombie(int $playerId): string
+    public function zombie(int $playerId): void
     {
         $pid          = (int)$playerId;
         $draftRows    = $this->game->getCollectionFromDb(
@@ -96,37 +105,25 @@ class SilverDraft extends \Bga\GameFramework\States\GameState
         );
         $draftCardIds = array_map('intval', array_keys($draftRows));
 
-        if (empty($draftCardIds)) {
-            return SilverDraftNext::class;
-        }
-
-        $keptCardId = $draftCardIds[0];
-        $this->game->DbQuery(
-            "UPDATE bc_card SET card_location = 'deck', card_location_arg = {$pid}
-             WHERE card_id = {$keptCardId}"
-        );
-
-        $remaining = array_values(array_diff($draftCardIds, [$keptCardId]));
-        if (!empty($remaining)) {
-            $leftId       = $this->getLeftNeighborId($pid);
-            $remainingStr = implode(',', $remaining);
+        if (!empty($draftCardIds)) {
+            $keptCardId = $draftCardIds[0];
             $this->game->DbQuery(
-                "UPDATE bc_card SET card_location_arg = {$leftId}
-                 WHERE card_id IN ({$remainingStr})"
+                "UPDATE bc_card SET card_location = 'deck', card_location_arg = {$pid}
+                 WHERE card_id = {$keptCardId}"
+            );
+
+            $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
+            $this->game->bga->notify->all('silverDraftPicked',
+                clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/2)'),
+                [
+                    'player_id'   => $pid,
+                    'player_name' => $this->game->getPlayerNameById($pid),
+                    'draft_round' => $draftRound,
+                ]
             );
         }
 
-        $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
-        $this->game->bga->notify->all('silverDraftPicked',
-            clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/2)'),
-            [
-                'player_id'   => $pid,
-                'player_name' => $this->game->getPlayerNameById($pid),
-                'draft_round' => $draftRound,
-            ]
-        );
-
-        return SilverDraftNext::class;
+        $this->gamestate->setPlayerNonMultiactive($pid, SilverDraftNext::class);
     }
 
     // "Left" = next player in the anticlockwise player_order array.

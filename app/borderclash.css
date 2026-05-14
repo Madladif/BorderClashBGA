@@ -68,14 +68,14 @@
 
 .bc-grid {
     display: grid;
-    grid-template-columns: repeat(3, 156px);
-    grid-template-rows: repeat(3, 117px);
+    grid-template-columns: repeat(3, 173px);
+    grid-template-rows: repeat(3, 125px);
     gap: 4px;
 }
 
 .bc-cell {
-    width: 156px;
-    height: 117px;
+    width: 173px;
+    height: 125px;
     border: 1px dashed #bbb;
     border-radius: 4px;
     background: #efefef;
@@ -97,12 +97,49 @@
 }
 
 /* ============================================================
+   Grid with flanking border columns
+   ============================================================ */
+
+.bc-grid-with-flanks {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+.bc-flank-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bc-flank-label {
+    font-size: 10px;
+    color: #888;
+    text-align: center;
+    white-space: nowrap;
+    margin-bottom: 2px;
+}
+
+.bc-flank-cell {
+    width: 173px;
+    height: 125px;
+    border: 1px dashed #cc8888;
+    border-radius: 4px;
+    background: #fff5f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+
+/* ============================================================
    Cards
    ============================================================ */
 
 .bc-card {
-    width: 150px;
-    height: 111px;
+    width: 167px;
+    height: 119px;
     border-radius: 4px;
     border: 1px solid rgba(0, 0, 0, 0.25);
     display: flex;
@@ -115,6 +152,22 @@
     padding: 4px;
     box-sizing: border-box;
     user-select: none;
+    position: relative;
+}
+
+/* Slot assignment badge (L / C / R) shown on deployed hand cards */
+.bc-slot-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    background: rgba(39, 174, 96, 0.92);
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+    pointer-events: none;
+    line-height: 1;
 }
 
 /* Rank color — used as solid background in non-sprite UI (upgrade info bar)
@@ -142,7 +195,7 @@
    Until img/cards_scoundrels.png exists, cards show as the rank solid color. */
 .bc-card-sprite {
     background-image: url('img/cards_scoundrels.png');
-    background-size: 1950px 333px;  /* 13 cols × 3 rows at 150×111 display size */
+    background-size: 2004px 357px;  /* 12 cols × 3 rows at 167×119 display size */
     background-repeat: no-repeat;
 }
 
@@ -163,11 +216,8 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    padding-top: 8px;
-    min-height: 0;
-}
-
-.bc-hand-area:not(:empty) {
+    padding: 8px 4px 4px;
+    min-height: 30px;
     border-top: 1px dashed #ccc;
     margin-top: 4px;
 }
@@ -191,6 +241,40 @@
 .bc-card-selected {
     box-shadow: 0 0 0 3px #27ae60 !important;
     transform: translateY(-4px) !important;
+}
+
+/* ============================================================
+   Draft deck fan (SilverDraft — shows cards already in deck)
+   ============================================================ */
+
+.bc-draft-deck-area {
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: #ececec;
+    border-radius: 6px;
+    width: fit-content;
+}
+
+.bc-draft-deck-label {
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+.bc-draft-deck-fan {
+    display: flex;
+    flex-direction: column;
+    width: 167px;
+    /* Total height = 1 full card + (n-1) × 50px offsets */
+}
+
+.bc-draft-deck-fan .bc-card {
+    flex-shrink: 0;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.bc-draft-deck-fan .bc-card + .bc-card {
+    margin-top: -69px; /* 119 - 50 = 69 → shows 50px of each card except the last */
 }
 
 /* ============================================================
@@ -345,6 +429,29 @@
     margin-left: 5px;
     color: #f1c40f;
     font-size: 13px;
+}
+
+/* ============================================================
+   Deploy — face-down deck pile shown in hand area
+   ============================================================ */
+
+.bc-deck-pile {
+    position: relative;
+    width: 167px;
+    flex-shrink: 0;
+}
+
+.bc-deck-count-badge {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 3px;
+    pointer-events: none;
 }
 
 /* ============================================================
