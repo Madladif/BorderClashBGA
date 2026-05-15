@@ -9,10 +9,22 @@ Status: **Not started** — scaffold is clean BGA template, nothing game-specifi
 - [x] `dbmodel.sql` — create `bc_card` table (incl. `card_family` column) and `bc_token` table; add gem and rage columns to `player`
 - [x] `Game.php::setupNewGame()` — create 24 Bronze + 36 Silver + 18 Gold cards in shared piles
 - [x] `Game.php::setupNewGame()` — distribute 6 unique Bronze cards to each player (personal decks)
-- [x] `Game.php::setupNewGame()` — run Silver draft (simplified: 3 random Silver per player — draft UI deferred to later phase)
+- [x] `Game.php::setupNewGame()` — deal 3 Silver cards per player into personal `'draft'` piles for Silver Draft (states 13/16)
 - [x] `Game.php::setupNewGame()` — init gems (1 charged, 2 uncharged per player), round=1, turn=1
 - [x] `Game.php::setupNewGame()` — determine first player randomly, set `turn_order_start`
 - [x] `Game.php::getAllDatas()` — return hand cards (private), grid cards (public face info only), gems, round/turn, turn order
+
+---
+
+## Phase 1.5 — Silver Draft (States 13 & 16)
+
+- [x] `States/SilverDraft.php` — MULTIPLE_ACTIVE_PLAYER, state id 13; players each pick 1 card from a 3-card draft hand
+- [x] `actPickSilver(int $keptCardId)` — validate card is in draft, move kept card to personal `'deck'`
+- [x] `getArgs()` — private per player: `draft_cards`, `deck_cards`, `draft_round`
+- [x] `States/SilverDraftNext.php` — GAME, state id 16; pass remaining draft cards to left neighbor after each pick
+- [x] After 2 passes: auto-assign last remaining card to left neighbor's deck, transition to Deploy
+- [x] JS SilverDraft state — display draft hand + deck fan; card selection; deck-fan updates on pick
+- [x] Notifications: `silverDraftPicked` (all), `silverCardKept` / `silverCardsReceived` / `silverLastCardReceived` (private), `silverDraftComplete` (all)
 
 ---
 

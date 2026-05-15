@@ -10,11 +10,11 @@ use Bga\GameFramework\States\PossibleAction;
 use Bga\GameFramework\UserException;
 use Bga\Games\borderclash\Game;
 
-class SilverDraft extends \Bga\GameFramework\States\GameState
+class SilverDraft extends GameState
 {
     public function __construct(protected Game $game)
     {
-        parent::__construct($game, id: 5, type: StateType::MULTIPLE_ACTIVE_PLAYER);
+        parent::__construct($game, id: 13, type: StateType::MULTIPLE_ACTIVE_PLAYER);
     }
 
     // Cards are pre-placed in 'draft' (arg = player_id) by setupNewGame (round 1)
@@ -82,7 +82,8 @@ class SilverDraft extends \Bga\GameFramework\States\GameState
         ]);
 
         $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
-        $this->game->bga->notify->all('silverDraftPicked',
+        $this->game->bga->notify->all(
+            'silverDraftPicked',
             clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/2)'),
             [
                 'player_id'   => $pid,
@@ -113,7 +114,8 @@ class SilverDraft extends \Bga\GameFramework\States\GameState
             );
 
             $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
-            $this->game->bga->notify->all('silverDraftPicked',
+            $this->game->bga->notify->all(
+                'silverDraftPicked',
                 clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/2)'),
                 [
                     'player_id'   => $pid,

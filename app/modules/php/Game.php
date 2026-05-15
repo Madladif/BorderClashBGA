@@ -175,6 +175,7 @@ class Game extends \Bga\GameFramework\Table
         $result['turn_number']         = (int)($this->bga->globals->get('turn_number')         ?? 1);
         $result['turn_order_start_id'] = (int)($this->bga->globals->get('turn_order_start_id') ?? 0);
         $result['player_order']        = $this->bga->globals->get('player_order') ?? [];
+        $result['current_player_id']   = $pid;
 
         return $result;
     }

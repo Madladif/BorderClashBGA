@@ -66,7 +66,10 @@
       "Bash(curl -s \"https://x.boardgamearena.net/data/game-libs/bga-animations/1.0.2/docs/classes/animation-manager.AnimationManager.html\")",
       "Bash(curl -s \"https://x.boardgamearena.net/data/game-libs/bga-cards/1.0.13/docs/classes/card-manager.CardManager.html\")",
       "Bash(curl -s \"https://x.boardgamearena.net/data/game-libs/bga-animations/1.0.2/docs/interfaces/animation.AnimationSettings.html\")",
-      "Bash(curl -s \"https://x.boardgamearena.net/data/game-libs/bga-animations/1.0.2/docs/interfaces/animation.AnimationManagerSettings.html\")"
+      "Bash(curl -s \"https://x.boardgamearena.net/data/game-libs/bga-animations/1.0.2/docs/interfaces/animation.AnimationManagerSettings.html\")",
+      "Bash(xargs grep -l \"SilverDraft\\\\|\\\\\"5\\\\\"\\\\|\\\\\"id.*5\")",
+      "Bash(php -l \"c:/Users/BenjaminLEVA/OneDrive - Merle Editions/Documents partages - Merle-éditions/Projets/Border Clash/Bga/app/modules/php/States/SilverDraft.php\")",
+      "Bash(php -l \"c:/Users/BenjaminLEVA/OneDrive - Merle Editions/Documents partages - Merle-éditions/Projets/Border Clash/Bga/app/modules/php/States/SilverDraftNext.php\")"
     ]
   }
 }

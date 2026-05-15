@@ -31,6 +31,9 @@ Framework: **new BGA PHP class-based framework** (namespace `Bga\Games\bordercla
 - `'grid_{player_id}'` — deployed in player grid, location_arg = grid_position 0–8
 - `'shared_bronze'` / `'shared_silver'` / `'shared_gold'` — shared draw piles, location_arg = 0
 - `'upgrade_temp_{player_id}'` — 3 cards drawn during upgrade pick, location_arg = 0–2
+- `'draft'` — Silver draft hand (pre-game phase only), location_arg = player_id
+- `'bot_deck'` — Solo mode: bot card pool (undeployed), location_arg = 0
+- `'bot_grid_left'` / `'bot_grid_right'` — Solo mode: bot columns, location_arg = row index (0–2)
 
 ### `bc_token` table
 
@@ -76,6 +79,8 @@ Total gems per player is always 3 (charged + uncharged = 3).
 | `turn_order_start_id` | int | player_id of the current "first player" (where marker sits) |
 | `player_order` | array | Ordered player_ids in anticlockwise combat direction |
 | `current_combat_idx` | int | Index into `player_order` of the combat currently being resolved |
+| `draft_round` | int | Silver draft pass number (1 or 2; set to 3 after completion) |
+| `is_solo` | bool | 1 in solo mode; set once in setupNewGame |
 
 ---
 
@@ -143,6 +148,8 @@ Within each combat, **left player's card effect is resolved first**, then right 
 |----|-------|------|-------------|
 | 1 | — | GAME | gameSetup (reserved) |
 | 10 | `Deploy` | MULTIPLE_ACTIVE | All players place 3 cards face down + mulligan |
+| 13 | `SilverDraft` | MULTIPLE_ACTIVE | Players simultaneously pick 1 Silver card from their 3-card draft hand (pre-game) |
+| 16 | `SilverDraftNext` | GAME | Pass remaining draft cards left; loop or transition to Deploy after 2 passes |
 | 20 | `RevealAndResolve` | GAME | Flip cards, resolve Influence, resolve Combats |
 | 30 | `CheckTurn` | GAME | Advance turn or trigger Upgrade / EndScore |
 | 40 | `Upgrade` | MULTIPLE_ACTIVE | Players simultaneously upgrade or produce center cards |
@@ -153,8 +160,11 @@ Within each combat, **left player's card effect is resolved first**, then right 
 ### Transitions
 
 ```
-gameSetup(1)        → Deploy(10)
-Deploy(10)          → RevealAndResolve(20)
+gameSetup(1)         → SilverDraft(13)
+SilverDraft(13)      → SilverDraftNext(16)
+SilverDraftNext(16)  → SilverDraft(13)       [draft_round ≤ 2: pass cards left, loop]
+SilverDraftNext(16)  → Deploy(10)            [draft_round > 2: draft complete]
+Deploy(10)           → RevealAndResolve(20)
 RevealAndResolve(20)→ CheckTurn(30)
 CheckTurn(30)       → Deploy(10)         [turn_number < 3: increment turn]
 CheckTurn(30)       → Upgrade(40)        [turn_number == 3 AND round < 4]
@@ -193,7 +203,14 @@ EndScore(98)        → gameEnd(99)
 
 | Name | Emitter | Payload | Description |
 |------|---------|---------|-------------|
-| `cardsDeployed` | `notify->all` | `player_id`, `count` | Player placed 3 face-down cards (no card types!) |
+| `silverDraftPicked` | `notify->all` | `player_id`, `player_name`, `draft_round` | Player picked a Silver card (no card type revealed) |
+| `silverCardKept` | `notify->player` | `card` (`id`, `type`, `type_arg`, `family`) | Private: the card the active player kept |
+| `silverCardsReceived` | `notify->player` | `cards[]` | Private: draft cards passed to recipient after a pick round |
+| `silverLastCardReceived` | `notify->player` | `card` | Private: last remaining card auto-assigned after pass 2 |
+| `silverDraftComplete` | `notify->all` | — | Silver Draft finished; game begins |
+| `handDealt` | `notify->player` | `hand[]`, `deck_count`, `gems_charged` | Private: authoritative hand delivery at Deploy state entry |
+| `cardsDeployed` | `notify->all` | `player_id`, `player_name`, `cards[]` (`id`, `position`) | Player placed 3 face-down cards (no card types!) |
+| `mulliganCard` | `notify->player` | `discarded_card_id`, `new_card` (`id`, `type`, `type_arg`, `family`) | Private: mulligan result for the active player |
 | `cardsRevealed` | `notify->all` | `player_id`, `cards[]` | Current row flipped face up with full type data |
 | `influenceResolved` | `notify->all` | `player_id`, `card_id`, `effect_type`, `effect_args` | Central card effect applied |
 | `combatResolved` | `notify->all` | `left_player_id`, `right_player_id`, `left_strength`, `right_strength`, `winner_id`, `combat_points`, `bonus_vp` | One combat result (combat_points = differential, bonus_vp = direct VP cards) |
@@ -204,6 +221,7 @@ EndScore(98)        → gameEnd(99)
 | `tokensCleared` | `notify->all` | — | End of round: all tokens removed |
 | `upgradeCompleted` | `notify->all` | `player_id`, `actions[]` | Upgrade choices applied |
 | `deckShuffled` | `notify->all` | `player_id` | Player shuffled deck for new round |
+| `botCardsDeployed` | `notify->all` | `left_count`, `right_count` | Solo mode: bot placed cards at round start |
 
 **Visibility rule** — CRITICAL:
 ```js

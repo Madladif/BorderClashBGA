@@ -113,6 +113,8 @@ const BgaCards = await importEsmLib("bga-cards", "1.x");
 | `self::` on instance method (PHP 8.4) | Use `$this->` everywhere (`self::CONST` for constants is fine) |
 | `${var}` in PHP string (PHP 8.4) | Use `{$var}` instead |
 | `implode(array, separator)` (PHP 8.4) | `implode(separator, array)` |
+| `gamedatas.hand` used after initial load | `gamedatas` is a **stale page-load snapshot** — never fall back to it for hand cards on turn 2+. Always use `args.hand` (live state args) or wait for `notif_handDealt` (the authoritative path from `Deploy::onEnteringState`). |
+| BgaCards `[data-slot-id="N"]` vs `.slot-N` | BgaCards creates `data-slot-id="N"` attribute, NOT `.slot-N` class. Use attribute selectors: `.bc-grid [data-slot-id="0"] { ... }` |
 
 ---
 

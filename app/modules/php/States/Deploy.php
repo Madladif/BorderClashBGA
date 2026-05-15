@@ -124,18 +124,23 @@ class Deploy extends GameState
         );
     }
 
-    // Returns the current player's hand + gem count (private — called per active player).
+    // Returns the current player's hand + deck count + gem count (private — called per active player).
     public function getArgs(?int $currentPlayerId = null): array
     {
         if ($currentPlayerId === null) {
             return [];
         }
+        $deckCount = (int)(($this->game->getObjectFromDB(
+            "SELECT COUNT(*) AS cnt FROM bc_card
+             WHERE card_location = 'deck' AND card_location_arg = {$currentPlayerId}"
+        ))['cnt'] ?? 0);
         return [
             'hand'         => array_values($this->game->getCollectionFromDb(
                 "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
                  FROM bc_card
                  WHERE card_location = 'hand' AND card_location_arg = {$currentPlayerId}"
             )),
+            'deck_count'   => $deckCount,
             'gems_charged' => $this->game->gemsCharged->get($currentPlayerId),
         ];
     }

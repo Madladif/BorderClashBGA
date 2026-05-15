@@ -8,36 +8,36 @@
    ============================================================ */
 
 #bc-round-tracker {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-    padding: 5px 12px;
-    background: #2c3e50;
-    color: #ecf0f1;
-    border-radius: 4px;
-    font-size: 13px;
-    font-weight: bold;
-    width: fit-content;
-    margin-bottom: 12px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 5px 12px;
+  background: #2c3e50;
+  color: #ecf0f1;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: bold;
+  width: fit-content;
+  margin-bottom: 12px;
 }
 
 #bc-players-area {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: flex-start;
 }
 
 #bc-shared-decks {
-    margin-top: 12px;
-    display: flex;
-    gap: 20px;
-    font-size: 12px;
-    color: #555;
-    padding: 6px 10px;
-    background: #f5f5f5;
-    border-radius: 4px;
-    width: fit-content;
+  margin-top: 12px;
+  display: flex;
+  gap: 20px;
+  font-size: 12px;
+  color: #555;
+  padding: 6px 10px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  width: fit-content;
 }
 
 /* ============================================================
@@ -45,21 +45,21 @@
    ============================================================ */
 
 .bc-player-board {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    border: 2px solid #ccc;
-    border-radius: 6px;
-    padding: 8px;
-    background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 2px solid #ccc;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fafafa;
 }
 
 .bc-player-label {
-    font-weight: bold;
-    font-size: 13px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid #eee;
-    white-space: nowrap;
+  font-weight: bold;
+  font-size: 13px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
 }
 
 /* ============================================================
@@ -67,33 +67,90 @@
    ============================================================ */
 
 .bc-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 173px);
-    grid-template-rows: repeat(3, 125px);
-    gap: 4px;
+  display: grid !important; /* override bga-cards inline display:flex */
+  grid-template-columns: repeat(3, 173px);
+  grid-template-rows: repeat(3, 125px);
+  gap: 4px;
+}
+
+/* Row 0 (turn 1) at bottom (grid-row 3), row 2 (turn 3) at top (grid-row 1).
+   BgaCards uses data-slot-id="N" — NOT a class — so we target with attribute selectors. */
+.bc-grid [data-slot-id="0"] {
+  grid-column: 1 !important;
+  grid-row: 3 !important;
+}
+.bc-grid [data-slot-id="1"] {
+  grid-column: 2 !important;
+  grid-row: 3 !important;
+}
+.bc-grid [data-slot-id="2"] {
+  grid-column: 3 !important;
+  grid-row: 3 !important;
+}
+.bc-grid [data-slot-id="3"] {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+}
+.bc-grid [data-slot-id="4"] {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+}
+.bc-grid [data-slot-id="5"] {
+  grid-column: 3 !important;
+  grid-row: 2 !important;
+}
+.bc-grid [data-slot-id="6"] {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+}
+.bc-grid [data-slot-id="7"] {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+}
+.bc-grid [data-slot-id="8"] {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
 }
 
 .bc-cell {
-    width: 173px;
-    height: 125px;
-    border: 1px dashed #bbb;
-    border-radius: 4px;
-    background: #efefef;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    overflow: hidden;
+  width: 173px;
+  height: 125px;
+  border: 1px dashed #bbb;
+  border-radius: 4px;
+  background: #efefef;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
 }
 
+/* Column styling by slot index (col = pos % 3) — use data-slot-id attribute selectors */
+.bc-grid [data-slot-id="1"],
+.bc-grid [data-slot-id="4"],
+.bc-grid [data-slot-id="7"] {
+  border-color: #8888cc;
+  background: #f0f0ff;
+}
+
+.bc-grid [data-slot-id="0"],
+.bc-grid [data-slot-id="2"],
+.bc-grid [data-slot-id="3"],
+.bc-grid [data-slot-id="5"],
+.bc-grid [data-slot-id="6"],
+.bc-grid [data-slot-id="8"] {
+  background: #f5f0e8;
+}
+
+/* Keep class-based rules for backwards compat with any existing markup */
 .bc-cell-center {
-    border-color: #8888cc;
-    background: #f0f0ff;
+  border-color: #8888cc;
+  background: #f0f0ff;
 }
 
 .bc-cell-left,
 .bc-cell-right {
-    background: #f5f0e8;
+  background: #f5f0e8;
 }
 
 /* ============================================================
@@ -101,111 +158,148 @@
    ============================================================ */
 
 .bc-grid-with-flanks {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
 }
 
 .bc-flank-col {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .bc-flank-label {
-    font-size: 10px;
-    color: #888;
-    text-align: center;
-    white-space: nowrap;
-    margin-bottom: 2px;
+  font-size: 10px;
+  color: #888;
+  text-align: center;
+  white-space: nowrap;
+  margin-bottom: 2px;
 }
 
 .bc-flank-cell {
-    width: 173px;
-    height: 125px;
-    border: 1px dashed #cc8888;
-    border-radius: 4px;
-    background: #fff5f5;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    overflow: hidden;
+  width: 173px;
+  height: 125px;
+  border: 1px dashed #cc8888;
+  border-radius: 4px;
+  background: #fff5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
 }
 
 /* ============================================================
-   Cards
+   Cards — outer wrapper (managed by bga-cards CardManager)
    ============================================================ */
 
+/* Outer wrapper: size, border, cursor.  No flex layout here — bga-cards
+   injects absolute-positioned .card-side face divs inside. */
 .bc-card {
-    width: 167px;
-    height: 119px;
-    border-radius: 4px;
-    border: 1px solid rgba(0, 0, 0, 0.25);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    line-height: 1.4;
-    text-align: center;
-    padding: 4px;
-    box-sizing: border-box;
-    user-select: none;
-    position: relative;
+  width: 167px;
+  height: 119px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  user-select: none;
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* bga-cards injects position:absolute + full-size on .card-side; we add
+   display:flex so text/sprite content centres inside each face. */
+.bc-card .card-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 /* Slot assignment badge (L / C / R) shown on deployed hand cards */
 .bc-slot-badge {
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    background: rgba(39, 174, 96, 0.92);
-    color: #fff;
-    font-size: 10px;
-    font-weight: bold;
-    padding: 2px 5px;
-    border-radius: 3px;
-    pointer-events: none;
-    line-height: 1;
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(39, 174, 96, 0.92);
+  color: #fff;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+  line-height: 1;
+  z-index: 5;
 }
 
-/* Rank color — used as solid background in non-sprite UI (upgrade info bar)
-   and as border accent + fallback bg on sprite cards */
+/* Rank color — used as solid background on the front face div.
+   Also used as background on non-card UI elements (upgrade info bar). */
 .bc-card-rank-1 {
-    background: #cd7f32;
-    border-color: #a06020;
-    color: #fff;
+  background: #cd7f32;
+  border-color: #a06020;
+  color: #fff;
 }
 
 .bc-card-rank-2 {
-    background: #b0b0b0;
-    border-color: #888;
-    color: #222;
+  background: #b0b0b0;
+  border-color: #888;
+  color: #222;
 }
 
 .bc-card-rank-3 {
-    background: #d4a800;
-    border-color: #a08000;
-    color: #333;
+  background: #d4a800;
+  border-color: #a08000;
+  color: #333;
 }
 
-/* Sprite card — overrides rank solid bg with the sprite sheet image.
-   background-position is set via inline style (computed from type + type_arg + family).
-   Until img/cards_scoundrels.png exists, cards show as the rank solid color. */
+/* Sprite card — on the front .card-side div.  background-position is
+   set via inline style (computed from type + type_arg + family). */
 .bc-card-sprite {
-    background-image: url('img/cards_scoundrels.png');
-    background-size: 2004px 357px;  /* 12 cols × 3 rows at 167×119 display size */
-    background-repeat: no-repeat;
+  background-image: url("img/cards_scoundrels.png");
+  background-size: 2004px 357px;
+  background-repeat: no-repeat;
 }
 
-/* Face-down card back — gradient placeholder until sprite col 12 is available */
+/* Face-down card back — on the back .card-side div (inside bga-cards element) */
 .bc-card-hidden {
-    background: linear-gradient(150deg, #2c3e50 0%, #4a6278 100%);
-    color: #90a8b8;
-    font-style: italic;
-    font-size: 20px;
-    letter-spacing: 2px;
+  background: linear-gradient(150deg, #2c3e50 0%, #4a6278 100%);
+  color: #90a8b8;
+  font-style: italic;
+  font-size: 20px;
+  letter-spacing: 2px;
+}
+
+/* Standalone flat face-down cards (flank mirrors, deck pile) — need explicit flex
+   centering since .bc-card no longer carries display:flex by default. */
+.bc-card.bc-card-hidden {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* bga-cards flip support — these are normally injected by the library, but
+   provided here as a fallback so the 3D flip works even if CSS injection fails. */
+.bc-card .card-sides {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease-in-out;
+}
+
+.bc-card .card-side {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.bc-card .card-side.back {
+  transform: rotateY(180deg);
 }
 
 /* ============================================================
@@ -213,13 +307,13 @@
    ============================================================ */
 
 .bc-hand-area {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 8px 4px 4px;
-    min-height: 30px;
-    border-top: 1px dashed #ccc;
-    margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 4px 4px;
+  min-height: 30px;
+  border-top: 1px dashed #ccc;
+  margin-top: 4px;
 }
 
 /* ============================================================
@@ -228,19 +322,21 @@
 
 .bc-hand-card,
 .bc-draft-card {
-    cursor: pointer;
-    transition: box-shadow 0.1s, transform 0.1s;
+  cursor: pointer;
+  transition:
+    box-shadow 0.1s,
+    transform 0.1s;
 }
 
 .bc-hand-card:hover,
 .bc-draft-card:hover {
-    box-shadow: 0 0 0 2px #3498db;
-    transform: translateY(-2px);
+  box-shadow: 0 0 0 2px #3498db;
+  transform: translateY(-2px);
 }
 
 .bc-card-selected {
-    box-shadow: 0 0 0 3px #27ae60 !important;
-    transform: translateY(-4px) !important;
+  box-shadow: 0 0 0 3px #27ae60 !important;
+  transform: translateY(-4px) !important;
 }
 
 /* ============================================================
@@ -248,33 +344,35 @@
    ============================================================ */
 
 .bc-draft-deck-area {
-    margin-top: 8px;
-    padding: 6px 8px;
-    background: #ececec;
-    border-radius: 6px;
-    width: fit-content;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #ececec;
+  border-radius: 6px;
+  width: fit-content;
 }
 
 .bc-draft-deck-label {
-    font-size: 11px;
-    color: #666;
-    margin-bottom: 4px;
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 4px;
 }
 
+/* LineStock renders the fan as a flex column — gap:0 lets our negative
+   margin-top rules create the cascading fan overlap. */
 .bc-draft-deck-fan {
-    display: flex;
-    flex-direction: column;
-    width: 167px;
-    /* Total height = 1 full card + (n-1) × 50px offsets */
+  display: flex;
+  flex-direction: column;
+  width: 167px;
+  gap: 0 !important;
 }
 
 .bc-draft-deck-fan .bc-card {
-    flex-shrink: 0;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
 }
 
 .bc-draft-deck-fan .bc-card + .bc-card {
-    margin-top: -69px; /* 119 - 50 = 69 → shows 50px of each card except the last */
+  margin-top: -69px; /* 119 - 50 = 69 → shows 50px of each card except the last */
 }
 
 /* ============================================================
@@ -282,42 +380,42 @@
    ============================================================ */
 
 #bc-deploy-ui {
-    margin-top: 14px;
-    padding: 10px 12px;
-    background: #f8f9fa;
-    border: 1px solid #ddd;
-    border-radius: 6px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 6px;
 }
 
 #bc-deploy-hint {
-    margin: 0 0 6px;
-    font-size: 12px;
-    color: #666;
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #666;
 }
 
 #bc-deploy-slots {
-    display: flex;
-    gap: 10px;
-    margin: 6px 0 10px;
+  display: flex;
+  gap: 10px;
+  margin: 6px 0 10px;
 }
 
 .bc-deploy-slot {
-    padding: 3px 8px;
-    background: #e0e0e0;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: bold;
+  padding: 3px 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: bold;
 }
 
 #bc-gems-info {
-    margin-top: 8px;
-    font-size: 11px;
-    color: #555;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #555;
 }
 
 /* Mulligan mode: hand cards pulse to signal selection */
 #bc-deploy-ui.bc-mulligan-mode .bc-hand-card {
-    box-shadow: 0 0 0 2px #e67e22;
+  box-shadow: 0 0 0 2px #e67e22;
 }
 
 /* ============================================================
@@ -325,85 +423,87 @@
    ============================================================ */
 
 #bc-upgrade-ui {
-    margin-top: 14px;
-    padding: 10px 12px;
-    background: #f8f9fa;
-    border: 1px solid #ddd;
-    border-radius: 6px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 6px;
 }
 
 #bc-upgrade-ui > p {
-    margin: 0 0 8px;
-    font-size: 12px;
+  margin: 0 0 8px;
+  font-size: 12px;
 }
 
 #bc-upgrade-cards {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
 }
 
 .bc-upgrade-card {
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    padding: 8px;
-    background: #fff;
-    min-width: 180px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fff;
+  min-width: 180px;
 }
 
 .bc-upgrade-card-info {
-    font-size: 10px;
-    font-weight: bold;
-    padding: 4px 6px;
-    border-radius: 4px;
-    margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 4px 6px;
+  border-radius: 4px;
+  margin-bottom: 6px;
 }
 
 .bc-upgrade-actions {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 8px;
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .bc-upgrade-actions button {
-    font-size: 10px;
-    padding: 3px 8px;
-    cursor: pointer;
-    border: 1px solid #aaa;
-    border-radius: 3px;
-    background: #efefef;
-    transition: background 0.1s;
+  font-size: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  background: #efefef;
+  transition: background 0.1s;
 }
 
 .bc-upgrade-actions button:hover {
-    background: #ddd;
+  background: #ddd;
 }
 
 .bc-btn-active {
-    background: #2980b9 !important;
-    color: #fff !important;
-    border-color: #1a6a9a !important;
+  background: #2980b9 !important;
+  color: #fff !important;
+  border-color: #1a6a9a !important;
 }
 
 .bc-upgrade-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .bc-upgrade-option {
-    cursor: pointer;
-    transition: box-shadow 0.1s, transform 0.1s;
+  cursor: pointer;
+  transition:
+    box-shadow 0.1s,
+    transform 0.1s;
 }
 
 .bc-upgrade-option:hover {
-    box-shadow: 0 0 0 2px #e67e22;
-    transform: translateY(-2px);
+  box-shadow: 0 0 0 2px #e67e22;
+  transform: translateY(-2px);
 }
 
 .bc-option-selected {
-    box-shadow: 0 0 0 3px #27ae60 !important;
+  box-shadow: 0 0 0 3px #27ae60 !important;
 }
 
 /* ============================================================
@@ -411,13 +511,13 @@
    ============================================================ */
 
 .bc-player-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    padding-top: 4px;
-    border-top: 1px solid #eee;
-    color: #444;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding-top: 4px;
+  border-top: 1px solid #eee;
+  color: #444;
 }
 
 /* ============================================================
@@ -425,10 +525,10 @@
    ============================================================ */
 
 .bc-first-player-marker {
-    display: inline-block;
-    margin-left: 5px;
-    color: #f1c40f;
-    font-size: 13px;
+  display: inline-block;
+  margin-left: 5px;
+  color: #f1c40f;
+  font-size: 13px;
 }
 
 /* ============================================================
@@ -436,22 +536,23 @@
    ============================================================ */
 
 .bc-deck-pile {
-    position: relative;
-    width: 167px;
-    flex-shrink: 0;
+  position: relative;
+  width: 167px;
+  flex-shrink: 0;
 }
 
 .bc-deck-count-badge {
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    background: rgba(0, 0, 0, 0.65);
-    color: #fff;
-    font-size: 12px;
-    font-weight: bold;
-    padding: 2px 6px;
-    border-radius: 3px;
-    pointer-events: none;
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* ============================================================
@@ -459,6 +560,62 @@
    ============================================================ */
 
 .bc-card-loser {
-    opacity: 0.45;
-    transition: opacity 0.6s;
+  opacity: 0.45;
+  transition: opacity 0.6s;
+}
+
+/* Strength popup shown on border cards during combat resolution */
+.bc-combat-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+  padding: 6px 14px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 10;
+  animation: bc-badge-pop 0.25s ease-out;
+}
+
+.bc-combat-badge.bc-combat-winner {
+  background: rgba(39, 174, 96, 0.9);
+}
+
+.bc-combat-badge.bc-combat-loser {
+  background: rgba(192, 57, 43, 0.85);
+}
+
+@keyframes bc-badge-pop {
+  from {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+/* Influence effect badge shown on the center card */
+.bc-effect-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(41, 128, 185, 0.92);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 5px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  z-index: 10;
+  text-align: center;
+  width: 155px;
+  box-sizing: border-box;
+  animation: bc-badge-pop 0.25s ease-out;
 }

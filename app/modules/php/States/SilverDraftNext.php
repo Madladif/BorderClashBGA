@@ -14,7 +14,7 @@ class SilverDraftNext extends GameState
 {
     public function __construct(protected Game $game)
     {
-        parent::__construct($game, id: 6, type: StateType::GAME);
+        parent::__construct($game, id: 16, type: StateType::GAME);
     }
 
     public function onEnteringState()
