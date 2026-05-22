@@ -14,20 +14,17 @@ A la fin, met à jour ce fichier sans demander.
 
 ---
 
-## [A faire] 20/05 20h
-[] Faire le shuffle de carte via Bga-cards/Stock/Deck/Shuffle
-
-
 ## Pour plus tard
-
-[] renommer les cartes
-[] Amateur : sur une frontière : si la carte rivale, ...
-[] Bug d'affichage, lorsque je passe en phase 2 de silver draft, j'ai 5 cartes affichée
-[] A tout moment (sauf pendant la sélection d'un remplacement), un bouton permet de terminer la phase en produisant les cartes restantes (avec boîte de confirmation).
 
 ---
 
 ## Logs - ne pas traiter
+
+## [Terminé] 20/05 20h
+
+[x] Faire le shuffle de carte via Bga-cards/Stock/Deck/Shuffle
+[x] Lorsque je passe sur une nouvelle phase après une phase d'upgrade, le bouton Mulligan n'apparaît pas. Il devrait apparaître Si j'ai au moins une gemme chargée.
+[x] Les tout types sur les cartes doivent toujours apparaître, peu importe la situation, sauf quand elles sont face cachée. C'est valable pour toutes les phases du jeu sur les cartes qui sont visibles, c'est-à-dire celles que j'ai en main, celles qui sont sur toutes les grilles, à n'importe quel moment.
 
 ## [Terminé] 19/05 15h45
 

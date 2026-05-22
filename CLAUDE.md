@@ -67,6 +67,10 @@ cat app/modules/php/Game.php
 | Jeton Or Pirate                 | pirate gold token                 |
 | Chaudron (Mages)                | cauldron                          |
 | Piste de Gloire (Champions)     | glory track                       |
+| Amateur                         | amateur                           |
+| Parieur                         | bettor                            |
+| Gros-bras                       | muscle man                        |
+| Carte rivale                    | rival card                        |
 
 ---
 

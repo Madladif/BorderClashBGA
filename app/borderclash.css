@@ -293,6 +293,25 @@
   background-repeat: no-repeat;
 }
 
+/* Traits overlay — shown on all visible cards (hand + grid) */
+.bc-card-traits-overlay {
+  position: absolute;
+  bottom: 3px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
+  line-height: 1.2;
+}
+
 /* Face-down card back — on the back .card-side div (inside bga-cards element) */
 .bc-card-hidden {
   background: linear-gradient(150deg, #2c3e50 0%, #4a6278 100%);

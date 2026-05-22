@@ -154,7 +154,7 @@ class RevealAndResolve extends GameState
                 $this->broadcastGemUpdated($rightPid);
             }
 
-            // Re-read cards (Mousse may have flipped face-down during effect)
+            // Re-read cards (Cabin Boy may have flipped face-down during effect)
             $leftCard  = $this->getCardAt($leftPid,  $leftPos)  ?? $leftCard;
             $rightCard = $this->getCardAt($rightPid, $rightPos) ?? $rightCard;
 
@@ -193,7 +193,7 @@ class RevealAndResolve extends GameState
                 $this->game->bga->playerStats->inc('combat_ties', 1, $rightPid);
             }
 
-            // After-combat effect (Double 6): winner rolls die
+            // After-combat effect (Snake): winner rolls die
             if ($winnerId !== null) {
                 $hasAfter = $lRes['after_combat'] || $rRes['after_combat'];
                 if ($hasAfter) {
@@ -203,7 +203,7 @@ class RevealAndResolve extends GameState
                 }
             }
 
-            // Direct VP bonuses (Loup-Garou, Lady Fortune)
+            // Direct VP bonuses (Werewolf, Lady Fortune)
             if ($lRes['vp_bonus'] > 0) {
                 $this->game->bga->playerScore->inc($leftPid, $lRes['vp_bonus']);
             }
@@ -386,7 +386,7 @@ class RevealAndResolve extends GameState
             $this->broadcastGemUpdated($pid);
         }
 
-        // Re-read player card (Mousse may have flipped face-down during effect)
+        // Re-read player card (Cabin Boy may have flipped face-down during effect)
         $playerCard = $this->getCardAt($pid, $playerPos) ?? $playerCard;
 
         $botStr = $this->calcBotStrength($side, $row, $botCard, $bRes);
@@ -421,7 +421,7 @@ class RevealAndResolve extends GameState
             $this->game->bga->playerStats->inc('combat_ties', 1, $pid);
         }
 
-        // After-combat bonus (Double 6)
+        // After-combat bonus (Snake)
         if ($winnerId !== null && ($bRes['after_combat'] || $pRes['after_combat'])) {
             $bonusVp = rand(1, 6);
             if ($winnerId === CardEffects::BOT_PLAYER_ID) {
@@ -526,7 +526,7 @@ class RevealAndResolve extends GameState
             'rage_toggle'    => $res['rage_toggle'] ?? null,
         ]);
 
-        // Mousse (1:5) flips face-down when on a border — animate the flip on the client
+        // Cabin Boy (1:5) flips face-down when on a border — animate the flip on the client
         if ($res['card_flipped_face_down'] ?? false) {
             $this->game->bga->notify->all('cardFlippedFaceDown', '', [
                 'player_id' => $pid,

@@ -1242,6 +1242,13 @@ export class Game {
         const pos = this._spritePos(card.type, card.type_arg, card.family);
         element.classList.add("bc-card-sprite", `bc-card-rank-${card.type}`);
         element.style.backgroundPosition = `${pos.x}px ${pos.y}px`;
+        const traits = this._cardTraits(card.type, card.type_arg);
+        if (traits.length > 0) {
+          const overlay = document.createElement("div");
+          overlay.className = "bc-card-traits-overlay";
+          overlay.textContent = traits.join(" · ");
+          element.appendChild(overlay);
+        }
       },
       setupBackDiv: (card, element) => {
         const family = parseInt(card.family, 10);
@@ -1505,36 +1512,36 @@ export class Game {
       a = parseInt(typeArg, 10);
     const NAMES = {
       "1:1": "Amateur",
-      "1:2": "Parieur",
+      "1:2": "Bettor",
       "1:3": "Troll",
-      "1:4": "Gros-bras",
-      "1:5": "Mousse",
-      "1:6": "Quartier-Maître",
+      "1:4": "Berserk",
+      "1:5": "Cabin Boy",
+      "1:6": "Freebooter",
       "2:1": "Bookmaker",
-      "2:2": "Croupier",
-      "2:3": "Pièce",
-      "2:4": "Tricheur",
-      "2:5": "Mécène",
-      "2:6": "Complice",
-      "2:7": "Mercenaire",
-      "2:8": "Grizzly",
-      "2:9": "Videur",
-      "2:10": "Berserker",
-      "2:11": "Loup-Garou",
-      "2:12": "Barbare",
-      "2:13": "Pillard",
-      "2:14": "Second",
-      "2:15": "Boucanier",
-      "2:16": "Artificier",
-      "2:17": "Vigie",
-      "2:18": "Navigateur",
-      "3:1": "Jack Jackpot",
+      "2:2": "Accomplice",
+      "2:3": "Dealer",
+      "2:4": "Cheater",
+      "2:5": "Patron",
+      "2:6": "The Coin",
+      "2:7": "Mercenary",
+      "2:8": "Muscle Man",
+      "2:9": "Bouncer",
+      "2:10": "Rampart",
+      "2:11": "Werewolf",
+      "2:12": "Barbarian",
+      "2:13": "Plunderer",
+      "2:14": "First Mate",
+      "2:15": "Buccaneer",
+      "2:16": "Gunner",
+      "2:17": "Lookout",
+      "2:18": "Navigator",
+      "3:1": "Mad Dice",
       "3:2": "Poker Face",
-      "3:3": "Double 6",
+      "3:3": "Snake",
       "3:4": "Brunhilde",
       "3:5": "Goliath",
       "3:6": "Shockfang",
-      "3:7": "Hollandais Volant",
+      "3:7": "Flying Dutchman",
       "3:8": "Lady Fortune",
       "3:9": "Davy Jones",
     };
@@ -1550,32 +1557,32 @@ export class Game {
       "1:5": () => `Frontière → retourne face cachée, +2 gemmes`,
       "1:6": () => `Jeton Or Pirate ici`,
       "2:1": (d) => `🎲 ${d} → jeton ±2/+4 pos. suivante`,
-      "2:2": () => `+1 force par carte Impact`,
-      "2:3": (d) => `🎲 ${d} → jeton ±3 ici`,
-      "2:4": () => `+1 gemme chargée, +2 force/gemme`,
-      "2:5": () => `Collecte tous les jetons Flambeur de la colonne`,
-      "2:6": (d) => `🎲 ${d} → +${d} force`,
-      "2:7": () => `Mercenaire : enragé → +3 force, sinon bascule`,
-      "2:8": () => `Grizzly : -1 gemme → +5 force, bascule rage`,
-      "2:9": () => `Videur : rival force > 2 → +4, bascule rage`,
-      "2:10": () => `Berserker : calme → force rival`,
-      "2:11": () => `Loup-Garou : enragé → +2 VP, bascule`,
-      "2:12": () => `Barbare : enragé → +1 force/Impact`,
-      "2:13": () => `Pillard : Gold en jeu → +2 gemmes chargées`,
-      "2:14": () => `Second : +3 force/Gold colonne`,
-      "2:15": () => `Boucanier : pas de Bronze → +3 force`,
-      "2:16": () => `Artificier : pos. préc. Gold → force imprimée`,
-      "2:17": () => `Vigie : rival Gold → +4 force`,
-      "2:18": () => `Navigateur : 2 jetons Or Pirate`,
-      "3:1": (d) => `🎲 ${d} → ${d <= 2 ? "jeton −4" : d <= 4 ? "+3 gemmes" : "jeton +8"}`,
-      "3:2": () => `Poker Face : collecte tous les jetons Flambeur`,
-      "3:3": () => `Double 6 : après combat, tirage VP bonus`,
-      "3:4": () => `Brunhilde : enragé → force colonne, bascule`,
-      "3:5": () => `Goliath : enragé → décharge tout, +3/gemme`,
-      "3:6": () => `Shockfang : enragé → +8 force, bascule`,
-      "3:7": () => `Hollandais Volant : retourne Gold → +4 force`,
-      "3:8": () => `Lady Fortune : +2 VP/Gold en jeu`,
-      "3:9": () => `Davy Jones : +2/Gold −1/Bronze`,
+      "2:2": () => `+1 strength per Impact card`,
+      "2:3": (d) => `🎲 ${d} → token ±3 here`,
+      "2:4": () => `Collect all Gambler tokens in column → flip to +`,
+      "2:5": () => `Charge 1 gem; +2 strength per charged gem`,
+      "2:6": (d) => `🎲 ${d} → +${d} strength`,
+      "2:7": () => `Mercenary: enraged → +3 strength, else toggle`,
+      "2:8": () => `Muscle Man: -1 gem → +5 strength, toggle rage`,
+      "2:9": () => `Bouncer: rival force > 2 → +4, toggle rage`,
+      "2:10": () => `Rampart: calm → gain rival's strength`,
+      "2:11": () => `Werewolf: enraged → +2 VP, toggle`,
+      "2:12": () => `Barbarian: enraged → +1 strength/Impact`,
+      "2:13": () => `Plunderer: Gold in play → charge 2 gems`,
+      "2:14": () => `First Mate: +3 strength/Gold in column`,
+      "2:15": () => `Buccaneer: no Bronze → +3 strength`,
+      "2:16": () => `Gunner: flip prev. card → +5/+3/+1 by rank`,
+      "2:17": () => `Lookout: rival Gold → +4 strength`,
+      "2:18": () => `Navigator: 2 pirate gold tokens`,
+      "3:1": (d) => `🎲 ${d} → ${d <= 2 ? "token −4" : d <= 4 ? "charge all gems" : "token +8"}`,
+      "3:2": () => `Poker Face: collect all Gambler tokens`,
+      "3:3": () => `Snake: after combat, winner rolls die for VP`,
+      "3:4": () => `Brunhilde: enraged → column strength, toggle`,
+      "3:5": () => `Goliath: enraged → discharge all, +3/gem`,
+      "3:6": () => `Shockfang: enraged → +8 strength, toggle`,
+      "3:7": () => `Flying Dutchman: flip Gold cards → +4 strength each`,
+      "3:8": () => `Lady Fortune: +2 VP/Gold in play`,
+      "3:9": () => `Davy Jones: +2/Gold −1/Bronze`,
     };
     const fn = EFFECTS[effectType];
     return fn ? fn(diceRoll) : effectType;
@@ -2265,6 +2272,7 @@ export class Game {
     if (roundEl) roundEl.textContent = args.round_number;
     const turnEl = document.getElementById("bc-turn-counter");
     if (turnEl) turnEl.textContent = args.turn_number;
+    this._currentTurn = args.turn_number;
 
     document.querySelectorAll(".bc-first-player-marker").forEach((el) => el.style.setProperty("display", "none"));
     const fpEl = document.getElementById(`bc-fp-${args.first_player_id}`);
@@ -2309,6 +2317,21 @@ export class Game {
         );
         await Promise.all(anims);
         await new Promise((r) => setTimeout(r, 60));
+
+        // Shuffle animation on the deck pile using BGA-cards Stock shuffle
+        const deckStock = new BgaCards.AllVisibleDeck(this.cardManager, deckTarget, {});
+        deckStock.shuffle?.();
+        // Fallback CSS shuffle if BGA-cards doesn't expose shuffle()
+        if (!deckStock.shuffle) {
+          for (const [angle, dur] of [[5, 80], [-5, 80], [3, 70], [-3, 70], [0, 70]]) {
+            deckTarget.style.transition = `transform ${dur}ms ease-in-out`;
+            deckTarget.style.transform = `rotate(${angle}deg)`;
+            await new Promise((r) => setTimeout(r, dur + 15));
+          }
+          deckTarget.style.transform = "";
+        }
+        deckStock.destroy?.();
+        await new Promise((r) => setTimeout(r, 100));
       }
       await gridStock.removeAll();
     }
@@ -2479,7 +2502,7 @@ export class Game {
     await this._animateDice(target, parseInt(String(args.dice_roll), 10));
   }
 
-  // Mousse (1:5) flipped face-down during combat — animate the flip and update the flank mirror
+  // Cabin Boy (1:5) flipped face-down during combat — animate the flip and update the flank mirror
   async notif_cardFlippedFaceDown(args) {
     const pid = String(args.player_id);
     const pos = parseInt(String(args.position), 10);

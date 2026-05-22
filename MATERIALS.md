@@ -42,29 +42,29 @@ In `bc_card`: `card_type` = rank (1=Bronze, 2=Silver, 3=Gold), `card_type_arg` =
 
 ### Bronze (card_type=1)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 1 | Amateur | 4 | 2 | Flambeur. Arcane. | Lancez le dé. Ajoutez un jeton sur l'emplacement suivant : 1–2 → jeton −1 / 3+ → jeton +1 | 2 + effet |
-| 2 | Parieur | 4 | 2 | Flambeur. Maîtrise. | Si cette carte partage un trait avec la carte rivale, chargez une gemme. (Traits : Flambeur ou Maîtrise) | 3 |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 1 | Amateur | Amateur | 4 | 2 | Gambler. Arcane. | Roll the die. Add a token to the next position: 1–2 → token −1 / 3+ → token +1 | 2 + effect |
+| 2 | Bettor | Parieur | 4 | 2 | Gambler. Mastery. | If this card shares a trait with the rival card, charge a gem. (Traits: Gambler or Mastery) | 3 |
 
 ### Silver (card_type=2)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 1 | Bookmaker | 2 | 3 | Flambeur. Arcane. | Lancez le dé. Ajoutez un jeton sur l'emplacement suivant : 1–2 → jeton −2 / 3+ → jeton +4 | 4 + effet |
-| 2 | Croupier | 2 | 2 | Flambeur. Impact. | Gagnez +1 Force pour chacune de vos cartes avec le trait Impact. | 5 |
-| 3 | Pièce | 2 | 3 | Flambeur. Arcane. | Lancez le dé. Ajoutez un jeton sur **cette carte** : 1–2 → jeton −3 / 3+ → jeton +3 | 4 + effet |
-| 4 | Tricheur | 2 | 0 | Flambeur. Impact. | Chargez une gemme. Gagnez +2 Force pour chacune de vos gemmes chargées. | 6 |
-| 5 | Mécène | 2 | 3 | Flambeur. Maîtrise. | Placez tous vos jetons [token_plus] et [token_minus] de cette colonne sur cette carte, puis retournez-les face [token_plus]. | 7 |
-| 6 | Complice | 2 | 1 | Flambeur. Impact. | Lancez le dé. Gagnez la valeur du dé en force. | 3 + effet |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 3 | Bookmaker | Bookmaker | 2 | 3 | Gambler. Arcane. | Roll the die. Add a token to the next position: 1–2 → token −2 / 3+ → token +4 | 4 + effect |
+| 4 | Accomplice | Complice | 2 | 2 | Gambler. Impact. | Gain +1 Strength for each of your cards with the Impact trait. | 5 |
+| 5 | Dealer | Croupier | 2 | 3 | Gambler. Arcane. | Roll the die. Add a token to **this card**: 1–2 → token −3 / 3+ → token +3 | 4 + effect |
+| 6 | Cheater | Tricheur | 2 | 3 | Gambler. Mastery. | Place all your [token_plus] and [token_minus] tokens from this column onto this card, then flip them to [token_plus]. | 6 |
+| 7 | Patron | Mécène | 2 | 0 | Gambler. Impact. | Charge a gem. Gain +2 Strength for each of your charged gems. | 7 |
+| 8 | The Coin | La Pièce | 2 | 1 | Gambler. Impact. | Roll the die. Gain the die value as strength. | 3 + effect |
 
 ### Or (card_type=3)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 1 | Jack Jackpot | 2 | 4 | Flambeur. Arcane. | Lancez le dé. 1–2 : jeton −4 sur cette carte. / 3–4 : chargez toutes vos gemmes. / 5–6 : jeton +8 sur cette carte. | 8 |
-| 2 | Poker Face | 2 | 2 | Flambeur. Maîtrise. | Placez tous vos jetons [token_plus] et [token_minus] en jeu sur cette carte, puis retournez-les face [token_plus]. | 8 |
-| 3 | Double 6 | 2 | 6 | Flambeur. Impact. | Après le combat : le vainqueur lance le dé et ajoute sa valeur à ses points de victoire. | 7 + effet |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 9 | Mad Dice | Mad Dice | 2 | 4 | Gambler. Arcane. | Roll the die. 1–2: add token −4 to this card. 3–4: charge all your gems. 5–6: add token +8 to this card. | 8 |
+| 10 | Poker Face | Poker Face | 2 | 2 | Gambler. Mastery. | Place all your [token_plus] and [token_minus] tokens in play onto this card, then flip them to [token_plus]. | 8 |
+| 11 | Snake | Snake | 2 | 6 | Gambler. Impact. | After combat: the winner rolls the die and adds its value to their victory points. | 7 + effect |
 
 ---
 
@@ -72,29 +72,29 @@ In `bc_card`: `card_type` = rank (1=Bronze, 2=Silver, 3=Gold), `card_type_arg` =
 
 ### Bronze (card_type=1)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 3 | Troll | 4 | 1 | Brute. Impact. | Enragé : +2 Force. Dans tous les cas : retournez votre marqueur Rage. (S'applique au centre et en frontière) | 2 + effet |
-| 4 | Gros-bras | 4 | 3 | Brute. Maîtrise. | Si cette carte a la plus grande force de cette colonne, chargez 1 gemme. (force = valeur imprimée) | 4 |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 1 | Troll | Troll | 4 | 1 | Brute. Impact. | Enraged: +2 Strength. In all cases: flip your Rage marker. (Applies at center and border) | 2 + effect |
+| 2 | Berserk | Gros-bras | 4 | 3 | Brute. Mastery. | If this card has the highest strength in this column, charge 1 gem. (strength = printed value) | 4 |
 
 ### Silver (card_type=2)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 7 | Mercenaire | 2 | 2 | Brute. Impact. | Enragé : +3 Force. / Calme : retournez votre marqueur Rage. | 3 + effet |
-| 8 | Grizzly | 2 | 3 | Brute. Impact. | Sur une frontière : déchargez une gemme pour gagner +5 Force. Dans tous les cas : retournez votre marqueur Rage. | 6 |
-| 9 | Videur | 2 | 2 | Brute. Impact. | Gagnez +4 Force si la carte rivale a une force **strictement supérieure** à 2. Calme : retournez votre marqueur Rage. | 3 + effet |
-| 10 | Berserker | 2 | 3 | Brute. Impact. | Calme : gagnez autant de force que la force de la carte rivale. | 4 + effet |
-| 11 | Loup-Garou | 2 | 3 | Brute. Maîtrise. | Enragé : gagnez 2 points de victoire. Dans tous les cas : retournez votre marqueur Rage. | 7 |
-| 12 | Barbare | 2 | 3 | Brute. Impact. | Enragé : +1 Force pour chacune de vos cartes avec le trait Impact. | 7 |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 3 | Mercenary | Mercenaire | 2 | 2 | Brute. Impact. | Enraged: +3 Strength. / Calm: flip your Rage marker. | 3 + effect |
+| 4 | Muscle Man | Berserk | 2 | 3 | Brute. Impact. | On a border: discharge a gem to gain +5 Strength. In all cases: flip your Rage marker. | 6 |
+| 5 | Bouncer | Videur | 2 | 2 | Brute. Impact. | Gain +4 Strength if the rival card has a strength strictly greater than 2. Calm: flip your Rage marker. | 3 + effect |
+| 6 | Rampart | Muraille | 2 | 3 | Brute. Impact. | Calm: gain strength equal to the rival card's strength. | 4 + effect |
+| 7 | Werewolf | Loup-Garou | 2 | 3 | Brute. Mastery. | Enraged: gain 2 victory points. In all cases: flip your Rage marker. | 7 |
+| 8 | Barbarian | Barbare | 2 | 3 | Brute. Impact. | Enraged: +1 Strength for each of your cards with the Impact trait. In all cases: flip your Rage marker. | 7 |
 
 ### Or (card_type=3)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 4 | Brunhilde | 2 | 4 | Brute. Maîtrise. | Enragé : ajoutez la force de vos autres cartes de cette colonne. Dans tous les cas : retournez votre marqueur Rage. | 9 |
-| 5 | Goliath | 2 | 5 | Brute. Impact. | Enragé : déchargez toutes vos gemmes et gagnez +3 Force par gemme déchargée par cet effet. | 9 |
-| 6 | Shockfang | 2 | 2 | Brute. Impact. | Enragé : +8 Force. Dans tous les cas : retournez votre marqueur Rage. | 4 + effet |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 9 | Brunhilde | Brunhilde | 2 | 4 | Brute. Mastery. | Enraged: add the strength of your other cards in this column. In all cases: flip your Rage marker. | 9 |
+| 10 | Goliath | Goliath | 2 | 5 | Brute. Impact. | Enraged: discharge all your gems and gain +3 Strength per gem discharged by this effect. | 9 |
+| 11 | Shockfang | Shockfang | 2 | 2 | Brute. Impact. | Enraged: +8 Strength. In all cases: flip your Rage marker. | 4 + effect |
 
 ---
 
@@ -102,29 +102,29 @@ In `bc_card`: `card_type` = rank (1=Bronze, 2=Silver, 3=Gold), `card_type_arg` =
 
 ### Bronze (card_type=1)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 5 | Mousse | 4 | 2 | Pirate. Énergie. | Sur une frontière : retournez cette carte face cachée pour charger 2 gemmes. (Une carte face cachée a une force de 0, et son rang/traits ne comptent plus pour aucun effet) | 3 |
-| 6 | Quartier-Maître | 4 | 1 | Pirate. Arcane. | Ajoutez un [token_gold] sur cette carte. ([token_gold] : cette carte est désormais considérée comme une carte Or) | 3 + effet |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 1 | Cabin Boy | Mousse | 4 | 2 | Pirate. Mastery. | On a border: flip this card face down to charge 2 gems. (A face-down card has strength 0 and its rank/traits no longer count for any effect) | 3 |
+| 2 | Freebooter | Flibustier | 4 | 1 | Pirate. Arcane. | Add a [token_gold] to this card. ([token_gold]: this card is now considered a Gold card) | 3 + effect |
 
 ### Silver (card_type=2)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 13 | Pillard | 2 | 4 | Pirate. Maîtrise. | Si vous avez une carte Or en jeu, chargez 2 gemmes. | 6 |
-| 14 | Second | 2 | 2 | Pirate. Impact. | Gagnez +3 Force pour chaque carte Or dans cette colonne. | 4 + effet |
-| 15 | Boucanier | 2 | 3 | Pirate. Impact. | Gagnez +3 Force si vous n'avez aucune carte Bronze en jeu. | 4 + effet |
-| 16 | Artificier | 2 | 3 | Pirate. Maîtrise. | Si la carte de l'emplacement précédent est Or, gagnez sa force. | 5 + effet |
-| 17 | Vigie | 2 | 4 | Pirate. Impact. | Gagnez +4 Force si la carte rivale est Or. | 4 + effet |
-| 18 | Navigateur | 2 | 4 | Pirate. Arcane. | Ajoutez un [token_gold] sur cette carte et un [token_gold] sur l'emplacement suivant. | 5 + effet |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 3 | Plunderer | Pillard | 2 | 4 | Pirate. Mastery. | If you have a Gold card in play, charge 2 gems. | 6 |
+| 4 | First Mate | Second | 2 | 2 | Pirate. Impact. | Gain +3 Strength for each Gold card in this column. | 4 + effect |
+| 5 | Buccaneer | Boucanier | 2 | 3 | Pirate. Impact. | Gain +3 Strength if you have no Bronze card in play. | 4 + effect |
+| 6 | Gunner | Artificier | 2 | 2 | Pirate. Mastery. | Flip the previous card. If it is Gold, gain +5 Strength. If Silver, gain +3 Strength. If Bronze, gain +1 Strength. | 5 + effect |
+| 7 | Lookout | Vigie | 2 | 4 | Pirate. Impact. | Gain +4 Strength if the rival card is Gold. | 4 + effect |
+| 8 | Navigator | Navigateur | 2 | 4 | Pirate. Arcane. | Add a [token_gold] to this card and a [token_gold] to the next position. | 5 + effect |
 
 ### Or (card_type=3)
 
-| design | Nom | Copies | Force | Traits | Effet | Force Solo |
-|--------|-----|--------|-------|--------|-------|------------|
-| 7 | Hollandais Volant | 2 | 0 | Pirate. Impact. | Retournez face cachée toutes vos autres cartes Or et gagnez +4 Force par carte retournée par cet effet. | 9 |
-| 8 | Lady Fortune | 2 | 0 | Pirate. Maîtrise. | Gagnez 2 points de victoire pour chacune de vos cartes Or en jeu. | 4 + effet |
-| 9 | Davy Jones | 2 | 2 | Pirate. Impact. | Gagnez +2 Force pour chacune de vos cartes Or en jeu. / Gagnez −1 Force pour chacune de vos cartes Bronze en jeu. | 9 |
+| design | Nom EN | Nom FR | Copies | Force | Traits | Effet | Force Solo |
+|--------|--------|--------|--------|-------|--------|-------|------------|
+| 9 | Flying Dutchman | Hollandais Volant | 2 | 0 | Pirate. Impact. | Flip all your other Gold cards face down and gain +4 Strength per card flipped by this effect. | 9 |
+| 10 | Lady Fortune | Lady Fortune | 2 | 0 | Pirate. Mastery. | Gain 2 victory points for each of your Gold cards in play. | 4 + effect |
+| 11 | Davy Jones | Davy Jones | 2 | 2 | Pirate. Impact. | Gain +2 Strength for each of your Gold cards in play. / Gain −1 Strength for each of your Bronze cards in play. | 9 |
 
 ---
 
