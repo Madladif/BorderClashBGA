@@ -64,9 +64,19 @@ class UpgradeMain extends GameState
         $allProduced = (array)($this->game->bga->globals->get('upgrade_produced') ?? []);
         $myProduced  = (array)($allProduced[$pid] ?? []);
 
-        // Cards already upgraded (sent to UpgradePickReplacement or done)
+        // Cards already upgraded (orig card ids replaced)
         $allUpgraded = (array)($this->game->bga->globals->get('upgrade_done') ?? []);
         $myUpgraded  = (array)($allUpgraded[$pid] ?? []);
+
+        // Cards already placed as replacements (face-down in grid, need family for back sprite)
+        $placedCards = array_values($this->game->getCollectionFromDb(
+            "SELECT card_id AS id, card_family AS family, card_location_arg AS position
+             FROM bc_card
+             WHERE card_location = 'grid_{$pid}'
+               AND card_location_arg IN (1, 4, 7)
+               AND card_face_up = 0
+               AND card_type IN (" . Game::RANK_SILVER . ", " . Game::RANK_GOLD . ")"
+        ));
 
         return [
             'center_cards'    => $centerCards,
@@ -75,6 +85,7 @@ class UpgradeMain extends GameState
             'gems_uncharged'  => $this->game->gemsUncharged->get($pid),
             'produced_ids'    => array_values($myProduced),
             'upgraded_ids'    => array_values($myUpgraded),
+            'placed_cards'    => $placedCards,
         ];
     }
 
@@ -206,6 +217,14 @@ class UpgradeMain extends GameState
         $this->gamestate->nextPrivateState($pid, UpgradePickReplacement::class);
     }
 
+    // Called by JS when center_cards is empty — all cards handled, end player's turn.
+    #[PossibleAction]
+    public function actConfirmUpgrade(): void
+    {
+        $pid = (int)$this->game->getCurrentPlayerId();
+        $this->finishPlayerPublic($pid);
+    }
+
     // Check if all center cards are handled — if so, deactivate player.
     private function checkDone(int $pid): void
     {
@@ -215,14 +234,18 @@ class UpgradeMain extends GameState
                AND card_location_arg IN (1, 4, 7)
                AND card_face_up = 1"
         );
-        if ((int)($remaining['cnt'] ?? 1) === 0) {
-            $this->finishPlayer($pid);
+        $cnt = (int)($remaining['cnt'] ?? 1);
+        $this->game->bga->notify->all('debugLog', 'dbg', ['msg' => "checkDone cnt={$cnt}"]);
+        if ($cnt === 0) {
+            $this->game->bga->notify->all('debugLog', 'dbg', ['msg' => "checkDone → finishPlayer"]);
+            $this->finishPlayerPublic($pid);
         }
         // else: stay in UpgradeMain, waiting for more actFlipDown / actSpendGem
     }
 
     // All cards handled — clean up and deactivate.
-    private function finishPlayer(int $pid): void
+    // Public so UpgradePickReplacement can call it directly when the last card was an upgrade.
+    public function finishPlayerPublic(int $pid): void
     {
         $allProduced = (array)($this->game->bga->globals->get('upgrade_produced') ?? []);
         $myProduced  = array_map('intval', (array)($allProduced[$pid] ?? []));

@@ -72,7 +72,7 @@ class UpgradePickReplacement extends GameState
         }
 
         $cardRow = $this->game->getObjectFromDB(
-            "SELECT card_type AS type FROM bc_card WHERE card_id = {$chosenId}"
+            "SELECT card_type AS type, card_family AS family FROM bc_card WHERE card_id = {$chosenId}"
         );
         if (!$cardRow) {
             throw new UserException("Chosen card not found");
@@ -108,20 +108,22 @@ class UpgradePickReplacement extends GameState
 
         $this->game->bga->playerStats->inc('cards_upgraded', 1, $pid);
 
-        // Notify: replacement card placed face-down in the slot
+        // Notify: replacement card placed face-down in the slot (family needed for back sprite)
         $this->game->bga->notify->player($pid, 'upgradeReplacementPicked', '', [
             'orig_card_id' => $origCardId,
             'chosen_id'    => $chosenId,
             'position'     => $position,
+            'family'       => (int)$cardRow['family'],
         ]);
-        // Public: others just see a face-down card appear in that slot
+        // Public: others see the old card removed and a face-down card appear in that slot
         $this->game->bga->notify->all('upgradeReplacementPlaced', '', [
-            'player_id' => $pid,
-            'chosen_id' => $chosenId,
-            'position'  => $position,
+            'player_id'    => $pid,
+            'orig_card_id' => $origCardId,
+            'chosen_id'    => $chosenId,
+            'position'     => $position,
         ]);
 
-        // Return to UpgradeMain — player continues with remaining cards
+        // Return to UpgradeMain — player continues with remaining cards (or finishes if none left)
         $this->gamestate->nextPrivateState($pid, UpgradeMain::class);
     }
 

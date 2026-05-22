@@ -33,7 +33,7 @@ class SilverDraft {
     const gd = this.game.gamedatas;
     const gdRound = gd?.draft_round ?? 1;
     const draftCards = args?.draft_cards ?? (gdRound === 1 ? (gd?.draft_cards ?? []) : []);
-    const deckCards  = args?.deck_cards  ?? (gdRound === 1 ? (gd?.deck_cards  ?? []) : []);
+    const deckCards = args?.deck_cards ?? (gdRound === 1 ? (gd?.deck_cards ?? []) : []);
     const draftRound = args?.draft_round ?? gdRound;
 
     if (draftCards.length > 0) {
@@ -52,7 +52,10 @@ class SilverDraft {
       if (!this._confirmedThisSession) {
         this._pid = this.game._currentPlayerPid();
         const waitingCards = (this.game.gamedatas.draft_cards ?? []).map((c) => ({
-          id: parseInt(String(c.id), 10), type: c.type, type_arg: c.type_arg, family: c.family,
+          id: parseInt(String(c.id), 10),
+          type: c.type,
+          type_arg: c.type_arg,
+          family: c.family,
         }));
         const handStock = this.game._handStocks[this._pid];
         if (handStock && handStock.getCards().length === 0 && waitingCards.length > 0) {
@@ -61,7 +64,10 @@ class SilverDraft {
         // Rebuild deck fan (includes the card just kept) if it was lost on reload.
         if (!this._draftFanStock) {
           const deckCards = (this.game.gamedatas.deck_cards ?? []).map((c) => ({
-            id: parseInt(String(c.id), 10), type: c.type, type_arg: c.type_arg, family: c.family,
+            id: parseInt(String(c.id), 10),
+            type: c.type,
+            type_arg: c.type_arg,
+            family: c.family,
           }));
           if (deckCards.length > 0) {
             await this._buildDeckFan(deckCards);
@@ -74,7 +80,7 @@ class SilverDraft {
     // gamedatas is a stale page-load snapshot — during pass 1→2, it still has pass-1 cards.
     // notif_draftCardsDealt is always sent and is the authoritative delivery path.
     const draftCards = args?.draft_cards ?? [];
-    const deckCards  = args?.deck_cards  ?? [];
+    const deckCards = args?.deck_cards ?? [];
     const draftRound = args?.draft_round ?? 1;
 
     if (draftCards.length > 0) {
@@ -680,6 +686,7 @@ class UpgradeMainState {
     this._visualCharged = 0;
     this._selectedCardId = null;
     this._myPid = null;
+    this._pendingConfirm = false;
   }
 
   onEnteringState(args, isCurrentPlayerActive) {
@@ -690,6 +697,12 @@ class UpgradeMainState {
       return;
     }
     this._myPid = this.game._currentPlayerPid();
+    // If notif_upgradeMainEntered already arrived with empty center_cards, confirm now.
+    if (this._pendingConfirm) {
+      this._pendingConfirm = false;
+      this.game.bga.actions.performAction("actConfirmUpgrade", {});
+      return;
+    }
     // Args may arrive via notif_upgradeMainEntered or directly from BGA private state args
     if ((args.center_cards || []).length > 0 || args.upgrade_options) {
       this._applyArgs(args);
@@ -738,7 +751,7 @@ class UpgradeMainState {
   }
 
   _build() {
-    console.log("[UpgradeMain] _build()", { centerCards: this._centerCards });
+    console.log("[DBG UpgradeMain._build()] centerCards count=", this._centerCards.length, JSON.stringify(this._centerCards));
 
     // Re-sync gem display
     this.game._updateGemDisplay(this._myPid, this._visualCharged, false);
@@ -985,14 +998,8 @@ class UpgradePickReplacementState {
       optEl.style.transform = "rotateY(0deg)";
       await new Promise((r) => setTimeout(r, 185));
 
-      // Phase 2: BgaCards animates the face-down card from optEl into the grid slot
-      const gridStock = this.game._gridStocks[this._myPid];
-      if (gridStock) {
-        const existing = gridStock.getCards().find((c) => c.id === this._chosenId);
-        if (!existing) {
-          await gridStock.addCard({ id: this._chosenId, position: this._position }, { fromElement: optEl });
-        }
-      }
+      // Phase 2: remove the option panel. The card will be placed in the grid by
+      // notif_upgradeReplacementPicked, which carries the correct family for the back sprite.
       document.getElementById(`bc-upgrade-opts-${this._origCardId}`)?.remove();
     }
 
@@ -2532,10 +2539,38 @@ export class Game {
   // Private: UpgradeMain entered — send center cards + options to player.
   // Authoritative path for private state args delivery.
   async notif_upgradeMainEntered(args) {
-    console.log("[UpgradeMain] notif_upgradeMainEntered", args);
+    console.log("[DBG notif_upgradeMainEntered] center_cards=", JSON.stringify(args.center_cards), "placed_cards=", JSON.stringify(args.placed_cards), "upgrade_options keys=", Object.keys(args.upgrade_options || {}));
     if (!this.upgradeMain._myPid) this.upgradeMain._myPid = this._myPid;
     this.upgradeMain._teardown();
+
+    // Sync placed replacement cards into the grid stock (notify->player delivery is unreliable
+    // for private notifs — upgradeMainEntered is the authoritative delivery path instead).
+    const pid = String(this._myPid);
+    const gridStock = this._gridStocks[pid];
+    if (gridStock && args.placed_cards?.length > 0) {
+      for (const pc of args.placed_cards) {
+        const id = parseInt(String(pc.id), 10);
+        const pos = parseInt(String(pc.position), 10);
+        const family = parseInt(String(pc.family), 10);
+        // Remove any card currently occupying this slot (the original card being replaced)
+        const slotCards = gridStock.getCards().filter((c) => c.position === pos);
+        for (const sc of slotCards) {
+          if (sc.id !== id) await gridStock.removeCard(sc);
+        }
+        const existing = gridStock.getCards().find((c) => c.id === id);
+        if (!existing) await gridStock.addCard({ id, position: pos, family });
+        console.log("[DBG notif_upgradeMainEntered] placed card", id, "at pos", pos, "family", family);
+      }
+    }
+
     this.upgradeMain._applyArgs(args);
+
+    // All cards handled — set flag so onEnteringState (which fires next) calls actConfirmUpgrade.
+    if ((args.center_cards || []).length === 0) {
+      this.upgradeMain._pendingConfirm = true;
+      return;
+    }
+
     await new Promise((r) => setTimeout(r, 150));
     this.upgradeMain._build();
   }
@@ -2560,28 +2595,50 @@ export class Game {
     if (card) this.cardManager.setCardVisible(card, false);
   }
 
-  // Private: own player's replacement card placed — animate to grid slot.
+  // Private: own player's replacement card placed — remove the upgraded card, add new one.
   async notif_upgradeReplacementPicked(args) {
     const pid = String(this._myPid);
     const gridStock = this._gridStocks[pid];
+    console.log("[DBG notif_upgradeReplacementPicked] args=", JSON.stringify(args), "gridStock=", !!gridStock);
     if (!gridStock) return;
+    const origId = parseInt(String(args.orig_card_id), 10);
+    const chosenId = parseInt(String(args.chosen_id), 10);
     const pos = parseInt(String(args.position), 10);
-    const existing = gridStock.getCards().find((c) => c.id === parseInt(String(args.chosen_id), 10));
-    if (existing) return;
-    await gridStock.addCard({ id: parseInt(String(args.chosen_id), 10), position: pos });
+    const family = parseInt(String(args.family ?? 1), 10);
+    const cardsInStock = gridStock.getCards().map((c) => c.id);
+    console.log("[DBG notif_upgradeReplacementPicked] origId=", origId, "chosenId=", chosenId, "pos=", pos, "family=", family, "cardsInStock=", cardsInStock);
+    const origCard = gridStock.getCards().find((c) => c.id === origId);
+    console.log("[DBG notif_upgradeReplacementPicked] origCard found=", !!origCard);
+    if (origCard) await gridStock.removeCard(origCard);
+    const existing = gridStock.getCards().find((c) => c.id === chosenId);
+    console.log("[DBG notif_upgradeReplacementPicked] existing chosenId=", !!existing, "→ will addCard=", !existing);
+    if (!existing) await gridStock.addCard({ id: chosenId, position: pos, family });
+    console.log(
+      "[DBG notif_upgradeReplacementPicked] done. cardsInStock after=",
+      gridStock.getCards().map((c) => c.id),
+    );
     document.getElementById(`bc-upgrade-opts-${args.orig_card_id}`)?.remove();
   }
 
-  // Public: another player placed a replacement card — show face-down in their grid.
+  // Public: another player placed a replacement card — remove the upgraded card, add new one.
   async notif_upgradeReplacementPlaced(args) {
     const pid = String(args.player_id);
     if (pid === String(this._myPid)) return; // own handled by notif_upgradeReplacementPicked
     const gridStock = this._gridStocks[pid];
     if (!gridStock) return;
+    const origId = parseInt(String(args.orig_card_id ?? 0), 10);
+    const chosenId = parseInt(String(args.chosen_id), 10);
     const pos = parseInt(String(args.position), 10);
-    const existing = gridStock.getCards().find((c) => c.id === parseInt(String(args.chosen_id), 10));
-    if (existing) return;
-    await gridStock.addCard({ id: parseInt(String(args.chosen_id), 10), position: pos });
+    if (origId) {
+      const origCard = gridStock.getCards().find((c) => c.id === origId);
+      if (origCard) await gridStock.removeCard(origCard);
+    }
+    const existing = gridStock.getCards().find((c) => c.id === chosenId);
+    if (!existing) await gridStock.addCard({ id: chosenId, position: pos });
+  }
+
+  async notif_debugLog(args) {
+    console.log("[DBG PHP]", args.msg);
   }
 
   // Legacy: kept for backward compat in case old notifs replay
