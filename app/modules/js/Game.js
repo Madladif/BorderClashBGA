@@ -2380,12 +2380,20 @@ export class Game {
   }
 
   // Solo: bot upgraded its deck — clear bot columns
-  async notif_botUpgraded() {
+  async notif_botUpgraded(args) {
     for (let row = 0; row < 3; row++) {
       const left = document.getElementById(`bc-flank-left-${row}`);
       if (left) left.innerHTML = "";
       const right = document.getElementById(`bc-flank-right-${row}`);
       if (right) right.innerHTML = "";
+    }
+
+    const removed = args.removed || [];
+    const added   = args.added   || null;
+    if (removed.length > 0 || added) {
+      const removedNames = removed.map(c => this._cardName(c.type, c.type_arg)).join(", ");
+      const addedName    = added ? this._cardName(added.type, added.type_arg) : "—";
+      console.log(`[Bot upgrade] Removed: ${removedNames} → Added: ${addedName}`);
     }
   }
 

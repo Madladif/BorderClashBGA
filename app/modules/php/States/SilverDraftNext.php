@@ -19,39 +19,55 @@ class SilverDraftNext extends GameState
 
     public function onEnteringState()
     {
-        $round     = (int)($this->game->bga->globals->get('draft_round') ?? 1);
+        $round     = (int)($this->game->bga->globals->get('draft_round') ?? 0);
         $nextRound = $round + 1;
         $this->game->bga->globals->set('draft_round', $nextRound);
 
-        if ($nextRound <= 2) {
-            // All players have picked their card — pass remaining draft cards to the left.
-            $this->passRemainingCards();
+        $isSolo    = (bool)($this->game->bga->globals->get('is_solo') ?? false);
+        $maxPasses = $isSolo ? 3 : 2;
+
+        if ($nextRound <= $maxPasses) {
+            // More passes to go — pass remaining cards (multiplayer only; solo keeps them)
+            if (!$isSolo) {
+                $this->passRemainingCards();
+            }
             return SilverDraft::class;
         }
 
-        // Pass 2 done — each player has 1 remaining draft card.
-        // Move it directly to the left neighbor's deck and notify them privately.
+        // All passes done — handle remaining draft cards
         $draftRows = $this->game->getCollectionFromDb(
             "SELECT card_id, card_type, card_type_arg, card_family, card_location_arg
              FROM bc_card WHERE card_location = 'draft'"
         );
-        foreach ($draftRows as $cardId => $card) {
-            $currentHolder = (int)$card['card_location_arg'];
-            $recipientPid  = $this->getLeftNeighborId($currentHolder);
 
-            $this->game->DbQuery(
-                "UPDATE bc_card SET card_location = 'deck', card_location_arg = {$recipientPid}
-                 WHERE card_id = {$cardId}"
-            );
+        if ($isSolo) {
+            // Solo: remaining 2 cards go back under the shared silver deck
+            foreach ($draftRows as $cardId => $card) {
+                $this->game->DbQuery(
+                    "UPDATE bc_card SET card_location = 'shared_silver', card_location_arg = 0
+                     WHERE card_id = {$cardId}"
+                );
+            }
+        } else {
+            // Multiplayer: each player's last remaining card goes to their left neighbor's deck
+            foreach ($draftRows as $cardId => $card) {
+                $currentHolder = (int)$card['card_location_arg'];
+                $recipientPid  = $this->getLeftNeighborId($currentHolder);
 
-            $this->game->bga->notify->player($recipientPid, 'silverLastCardReceived', '', [
-                'card' => [
-                    'id'       => (int)$cardId,
-                    'type'     => (int)$card['card_type'],
-                    'type_arg' => (int)$card['card_type_arg'],
-                    'family'   => (int)$card['card_family'],
-                ],
-            ]);
+                $this->game->DbQuery(
+                    "UPDATE bc_card SET card_location = 'deck', card_location_arg = {$recipientPid}
+                     WHERE card_id = {$cardId}"
+                );
+
+                $this->game->bga->notify->player($recipientPid, 'silverLastCardReceived', '', [
+                    'card' => [
+                        'id'       => (int)$cardId,
+                        'type'     => (int)$card['card_type'],
+                        'type_arg' => (int)$card['card_type_arg'],
+                        'family'   => (int)$card['card_family'],
+                    ],
+                ]);
+            }
         }
 
         $this->game->bga->notify->all('silverDraftComplete',

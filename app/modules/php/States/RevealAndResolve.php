@@ -342,48 +342,72 @@ class RevealAndResolve extends GameState
     {
         $pid = (int)$playerOrder[0];
 
-        // Combat 1: bot_left vs player col1 (left border)
+        // Activation order: flank-left(=bot_grid_right) → col1 → col3 → flank-right(=bot_grid_left)
+        // JS inverts side for display: bot_grid_right → bc-flank-left, bot_grid_left → bc-flank-right
+        // Combat 1: bot_grid_right (shown left) vs col1 — bot activates first
         $pLeftPos  = $row * 3 + 0;
-        $botLeft   = $this->getBotCard('left',  $row);
+        $botLeft   = $this->getBotCard('right', $row);
         $pLeftCard = $this->getCardAt($pid, $pLeftPos);
         if ($botLeft !== null && $pLeftCard !== null && (int)$pLeftCard['face_up']) {
-            $this->resolveSoloCombat('left', $row, $botLeft, $pid, $pLeftPos, $pLeftCard);
+            $this->resolveSoloCombat('right', $row, $botLeft, $pid, $pLeftPos, $pLeftCard, botFirst: true);
         }
 
-        // Combat 2: bot_right vs player col3 (right border)
+        // Combat 2: col3 vs bot_grid_left (shown right) — player activates first
         $pRightPos  = $row * 3 + 2;
-        $botRight   = $this->getBotCard('right', $row);
+        $botRight   = $this->getBotCard('left', $row);
         $pRightCard = $this->getCardAt($pid, $pRightPos);
         if ($botRight !== null && $pRightCard !== null && (int)$pRightCard['face_up']) {
-            $this->resolveSoloCombat('right', $row, $botRight, $pid, $pRightPos, $pRightCard);
+            $this->resolveSoloCombat('left', $row, $botRight, $pid, $pRightPos, $pRightCard, botFirst: false);
         }
     }
 
     private function resolveSoloCombat(
         string $side, int $row,
-        array $botCard, int $pid, int $playerPos, array $playerCard
+        array $botCard, int $pid, int $playerPos, array $playerCard,
+        bool $botFirst = true
     ): void {
         $botGridPos = CardEffects::botGridPos($side, $row);
 
-        // Bot effect resolved first (solo rule)
-        $bRes = CardEffects::applyBotEffect(
-            $botCard, $side, $row,
-            $playerCard, $pid, $playerPos,
-            $this->game
-        );
-        if ($bRes['rage_toggle'] !== null) {
-            $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
-        }
+        if ($botFirst) {
+            // Bot activates first (left combat)
+            $bRes = CardEffects::applyBotEffect(
+                $botCard, $side, $row,
+                $playerCard, $pid, $playerPos,
+                $this->game
+            );
+            if ($bRes['rage_toggle'] !== null) {
+                $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
+            }
 
-        // Player effect
-        $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
-        $pRes = CardEffects::applyEffect(
-            $playerCard, $pid, $playerPos, 'combat',
-            $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos,
-            $this->game
-        );
-        if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
-            $this->broadcastGemUpdated($pid);
+            $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
+            $pRes = CardEffects::applyEffect(
+                $playerCard, $pid, $playerPos, 'combat',
+                $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos,
+                $this->game
+            );
+            if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
+                $this->broadcastGemUpdated($pid);
+            }
+        } else {
+            // Player activates first (right combat)
+            $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
+            $pRes = CardEffects::applyEffect(
+                $playerCard, $pid, $playerPos, 'combat',
+                $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos,
+                $this->game
+            );
+            if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
+                $this->broadcastGemUpdated($pid);
+            }
+
+            $bRes = CardEffects::applyBotEffect(
+                $botCard, $side, $row,
+                $playerCard, $pid, $playerPos,
+                $this->game
+            );
+            if ($bRes['rage_toggle'] !== null) {
+                $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
+            }
         }
 
         // Re-read player card (Cabin Boy may have flipped face-down during effect)
@@ -392,15 +416,20 @@ class RevealAndResolve extends GameState
         $botStr = $this->calcBotStrength($side, $row, $botCard, $bRes);
         $pStr   = $this->calcStrength($pid, $playerPos, $playerCard, $pRes);
 
-        // Announce combat sequence: start → effects → result
+        // Announce combat sequence: start → effects (in activation order) → result
         $this->notifyCombatStart(
             CardEffects::BOT_PLAYER_ID, clienttranslate('Bot'),
             CardEffects::getName((int)$botCard['type'],    (int)$botCard['type_arg']),
             $pid, $this->game->getPlayerNameById($pid),
             CardEffects::getName((int)$playerCard['type'], (int)$playerCard['type_arg'])
         );
-        $this->notifySoloCombatEffect($botCard,    $side, $row,       $bRes, $botStr);
-        $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
+        if ($botFirst) {
+            $this->notifySoloCombatEffect($botCard,   $side, $row,       $bRes, $botStr);
+            $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
+        } else {
+            $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
+            $this->notifySoloCombatEffect($botCard,   $side, $row,       $bRes, $botStr);
+        }
 
         $diff     = abs($botStr - $pStr);
         $winnerId = null;

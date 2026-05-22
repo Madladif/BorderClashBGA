@@ -123,7 +123,7 @@ class Game extends \Bga\GameFramework\Table
             foreach (['bot_grid_left', 'bot_grid_right'] as $loc) {
                 $rows = $this->getCollectionFromDb(
                     "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg,
-                            card_family AS family, card_location_arg AS row, card_face_up AS face_up
+                            card_family AS family, card_location_arg AS `row`, card_face_up AS face_up
                      FROM bc_card WHERE card_location = '{$loc}'"
                 );
                 foreach ($rows as $card) {
@@ -288,7 +288,7 @@ class Game extends \Bga\GameFramework\Table
 
         if ($isSolo) {
             $pid = (int)array_key_first($players);
-            // Solo: draw 5 Silver, keep 3 (simplified: random 3 kept; no draft)
+            // Solo: draw 5 Silver into draft; player picks 3 over 3 passes (SilverDraft handles it)
             $this->setupSoloPlayerSilver($pid);
             $this->setupBot($difficulty);
         } else {
@@ -321,15 +321,15 @@ class Game extends \Bga\GameFramework\Table
         $this->bga->globals->set('player_order',        $playerOrder);
         $this->bga->globals->set('current_combat_idx',  0);
         $this->bga->globals->set('is_solo',             $isSolo ? 1 : 0);
+        $this->bga->globals->set('draft_round', 0);
         if ($isSolo) {
             $this->bga->globals->set('bot_score',      0);
             $this->bga->globals->set('bot_difficulty', $difficulty);
             $this->bga->globals->set('bot_rage',       0);
-        } else {
-            $this->bga->globals->set('draft_round', 0);
         }
-        
-        return $isSolo ? Deploy::class : SilverDraftNext::class;
+
+        // Both solo and multiplayer start with SilverDraftNext → SilverDraft
+        return SilverDraftNext::class;
         } catch (\Throwable $t) {
             throw new \Exception(
                 'Setup failed: ' . $t->getMessage()
@@ -411,20 +411,19 @@ class Game extends \Bga\GameFramework\Table
 
     private function setupSoloPlayerSilver(int $playerId): void
     {
-        // Draw 5 Silver, keep 3 (simplified: random 3 kept; draft UI deferred)
+        // Draw 5 Silver into draft; player picks 3 over 3 passes in SilverDraft
         $drawn = $this->getCollectionFromDb(
             "SELECT card_id FROM bc_card
              WHERE card_location = 'shared_silver'
              ORDER BY RAND() LIMIT 5"
         );
-        if (count($drawn) < 3) {
-            throw new \RuntimeException("Not enough Silver cards for solo player");
+        if (count($drawn) < 5) {
+            throw new \RuntimeException("Not enough Silver cards for solo player draft");
         }
-        $keptIds = array_slice(array_map('intval', array_keys($drawn)), 0, 3);
-        $keptStr = implode(',', $keptIds);
+        $ids = implode(',', array_map('intval', array_keys($drawn)));
         static::DbQuery(
-            "UPDATE bc_card SET card_location = 'deck', card_location_arg = {$playerId}
-             WHERE card_id IN ({$keptStr})"
+            "UPDATE bc_card SET card_location = 'draft', card_location_arg = {$playerId}
+             WHERE card_id IN ({$ids})"
         );
     }
 

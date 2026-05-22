@@ -20,6 +20,16 @@ A la fin, met à jour ce fichier sans demander.
 
 ## Logs - ne pas traiter
 
+## [Terminé] 22/05 15h
+
+[x] Lorsque je lance une partie en solo, la phase de Silver Draft consiste à piocher 5 cartes, à en choisir 3 qui rentreront dans le paquet et les 2 autres iront en dessous du deck argent. C'est à implémenter.
+[x] Lors d'une partie solo, La résolution commence toujours par la carte d'influence, donc la carte centrale du joueur. Puis, c'est la carte la plus à gauche, donc du flanc gauche qui se déclenche :
+
+- c'est-à-dire celle du bot
+- la carte gauche de la grille du joueur
+- la carte droite de la grille du joueur
+- la carte droite du flanc droit, c'est-à-dire celle du bot
+
 ## [Terminé] 20/05 20h
 
 [x] Faire le shuffle de carte via Bga-cards/Stock/Deck/Shuffle

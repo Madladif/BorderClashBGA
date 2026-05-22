@@ -6,6 +6,7 @@ namespace Bga\Games\borderclash\States;
 
 use Bga\GameFramework\StateType;
 use Bga\GameFramework\States\GameState;
+use Bga\Games\borderclash\CardEffects;
 use Bga\Games\borderclash\Game;
 
 class NextRound extends GameState
@@ -31,7 +32,31 @@ class NextRound extends GameState
             );
             // Clear bot tokens
             $this->game->DbQuery("DELETE FROM bc_token WHERE player_id = 0");
-            $this->game->bga->notify->all('botUpgraded', clienttranslate('The bot upgrades its deck'), []);
+            $removed = (array)($this->game->bga->globals->get('bot_upgrade_removed') ?? []);
+            $added   = $this->game->bga->globals->get('bot_upgrade_added') ?? null;
+            $this->game->bga->notify->all('botUpgraded', clienttranslate('The bot upgrades its deck'), [
+                'removed' => $removed,
+                'added'   => $added,
+            ]);
+            $rankNames = [1 => 'Bronze', 2 => 'Silver', 3 => 'Gold'];
+            foreach ($removed as $card) {
+                $this->game->bga->notify->all('message',
+                    clienttranslate('Bot discards ${card_name} (${rank})'),
+                    [
+                        'card_name' => CardEffects::getName((int)$card['type'], (int)$card['type_arg']),
+                        'rank'      => $rankNames[(int)$card['type']] ?? '?',
+                    ]
+                );
+            }
+            if ($added !== null) {
+                $this->game->bga->notify->all('message',
+                    clienttranslate('Bot gains ${card_name} (${rank})'),
+                    [
+                        'card_name' => CardEffects::getName((int)$added['type'], (int)$added['type_arg']),
+                        'rank'      => $rankNames[(int)$added['type']] ?? '?',
+                    ]
+                );
+            }
         }
 
         // Return all remaining grid cards to each player's deck (face-down).
@@ -76,7 +101,7 @@ class NextRound extends GameState
     private function upgradeBotDeck(): void
     {
         $allRows = $this->game->getCollectionFromDb(
-            "SELECT card_id AS id, card_type AS type
+            "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg
              FROM bc_card
              WHERE card_location IN ('bot_grid_left', 'bot_grid_right', 'bot_deck')"
         );
@@ -84,7 +109,7 @@ class NextRound extends GameState
             return;
         }
 
-        // Pick 2 non-Gold at random (skip Gold; give up if not enough non-Gold)
+        // Pick 2 Bronze/Silver at random (skip Gold and Silver if upgrading from Bronze)
         $ids = array_keys($allRows);
         shuffle($ids);
         $nonGoldIds = [];
@@ -92,12 +117,13 @@ class NextRound extends GameState
             if (count($nonGoldIds) >= 2) {
                 break;
             }
-            if ((int)$allRows[$rawId]['type'] !== 3) {
+            $t = (int)$allRows[$rawId]['type'];
+            if ($t === 1 || $t === 2) {
                 $nonGoldIds[] = (int)$rawId;
             }
         }
         if (count($nonGoldIds) < 2) {
-            return; // All Gold cards — no upgrade possible
+            return; // Not enough Bronze/Silver cards — no upgrade possible
         }
 
         // Determine the next rank (highest rank of the 2 removed cards + 1, capped at Gold)
@@ -120,10 +146,12 @@ class NextRound extends GameState
 
         // Draw 1 card from the next-rank shared pile into bot_deck
         $newCard = $this->game->getObjectFromDB(
-            "SELECT card_id FROM bc_card
+            "SELECT card_id, card_type AS type, card_type_arg AS type_arg
+             FROM bc_card
              WHERE card_location = '{$piles[$nextRank]}'
              ORDER BY RAND() LIMIT 1"
         );
+        $addedCard = null;
         if (!empty($newCard)) {
             $ncid = (int)$newCard['card_id'];
             $this->game->DbQuery(
@@ -131,6 +159,19 @@ class NextRound extends GameState
                  SET card_location = 'bot_deck', card_location_arg = 0
                  WHERE card_id = {$ncid}"
             );
+            $addedCard = ['type' => (int)$newCard['type'], 'type_arg' => (int)$newCard['type_arg']];
         }
+
+        // Build removed card list for the log
+        $removedCards = [];
+        foreach ($nonGoldIds as $cid) {
+            $removedCards[] = [
+                'type'     => (int)$allRows[$cid]['type'],
+                'type_arg' => (int)$allRows[$cid]['type_arg'],
+            ];
+        }
+
+        $this->game->bga->globals->set('bot_upgrade_removed', $removedCards);
+        $this->game->bga->globals->set('bot_upgrade_added',   $addedCard);
     }
 }

@@ -109,13 +109,16 @@ class SilverDraft extends GameState
         ]);
 
         $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
+        $isSolo    = (bool)($this->game->bga->globals->get('is_solo') ?? false);
+        $maxPasses = $isSolo ? 3 : 2;
         $this->game->bga->notify->all(
             'silverDraftPicked',
-            clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/2)'),
+            clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/${max_passes})'),
             [
                 'player_id'   => $pid,
                 'player_name' => $this->game->getPlayerNameById($pid),
                 'draft_round' => $draftRound,
+                'max_passes'  => $maxPasses,
             ]
         );
 
@@ -141,13 +144,16 @@ class SilverDraft extends GameState
             );
 
             $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
+            $isSolo     = (bool)($this->game->bga->globals->get('is_solo') ?? false);
+            $maxPasses  = $isSolo ? 3 : 2;
             $this->game->bga->notify->all(
                 'silverDraftPicked',
-                clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/2)'),
+                clienttranslate('${player_name} picks a Silver card (pass ${draft_round}/${max_passes})'),
                 [
                     'player_id'   => $pid,
                     'player_name' => $this->game->getPlayerNameById($pid),
                     'draft_round' => $draftRound,
+                    'max_passes'  => $maxPasses,
                 ]
             );
         }
