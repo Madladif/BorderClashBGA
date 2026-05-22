@@ -70,6 +70,25 @@ class Game extends \Bga\GameFramework\Table
         $this->gemsCharged->fillResult($result);
         $this->gemsUncharged->fillResult($result);
 
+        // Player families — one card from each player's owned locations (hand/deck/grid)
+        $allPids = array_keys($result['players']);
+        if (!empty($allPids)) {
+            $pidList = implode(',', array_map('intval', $allPids));
+            $famRows = $this->getCollectionFromDb(
+                "SELECT card_location_arg AS pid, MIN(card_family) AS family
+                 FROM bc_card
+                 WHERE card_location_arg IN ({$pidList})
+                   AND card_family > 0
+                 GROUP BY card_location_arg"
+            );
+            foreach ($famRows as $row) {
+                $p = (string)$row['pid'];
+                if (isset($result['players'][$p])) {
+                    $result['players'][$p]['family'] = (int)$row['family'];
+                }
+            }
+        }
+
         // Current player's hand (private — full card data, face visible)
         $result['hand'] = array_values($this->getCollectionFromDb(
             "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
@@ -113,12 +132,12 @@ class Game extends \Bga\GameFramework\Table
                         'side'    => $loc === 'bot_grid_left' ? 'left' : 'right',
                         'row'     => (int)$card['row'],
                         'face_up' => (int)$card['face_up'],
-                        'type'    => null, 'type_arg' => null, 'family' => null,
+                        'type'    => null, 'type_arg' => null,
+                        'family'  => (int)$card['family'], // always visible: back shows faction
                     ];
                     if ((int)$card['face_up']) {
                         $entry['type']     = (int)$card['type'];
                         $entry['type_arg'] = (int)$card['type_arg'];
-                        $entry['family']   = (int)$card['family'];
                     }
                     $botGridCards[] = $entry;
                 }
@@ -138,11 +157,52 @@ class Game extends \Bga\GameFramework\Table
             if (!(int)$card['face_up']) {
                 $card['type']     = null;
                 $card['type_arg'] = null;
-                $card['family']   = null;
+                // family kept: card back visually identifies the deck/faction
             }
         }
         unset($card);
         $result['grid_cards'] = array_values($gridCards);
+
+        // If upgrade_options exist for this player in globals, we are in the Upgrade state.
+        // Include private upgrade data so JS can restore the UI on F5 (notify->player is not replayed).
+        $allUpgradeOptions = (array)($this->bga->globals->get('upgrade_options') ?? []);
+        if (isset($allUpgradeOptions[$pid]) || isset($allUpgradeOptions[(string)$pid])) {
+            $myOptionsMap = (array)($allUpgradeOptions[$pid] ?? $allUpgradeOptions[(string)$pid] ?? []);
+            $centerCards = array_values($this->getCollectionFromDb(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg,
+                        card_family AS family, card_location_arg AS position
+                 FROM bc_card
+                 WHERE card_location = 'grid_{$pid}'
+                   AND card_location_arg IN (1, 4, 7)
+                   AND card_face_up = 1"
+            ));
+
+            $upgradeOptions = [];
+            foreach ($myOptionsMap as $origCardId => $optionIds) {
+                $details = [];
+                foreach ($optionIds as $oid) {
+                    $row = $this->getObjectFromDB(
+                        "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg,
+                                card_family AS family
+                         FROM bc_card WHERE card_id = {$oid}"
+                    );
+                    if ($row) {
+                        $details[] = [
+                            'id'       => (int)$row['id'],
+                            'type'     => (int)$row['type'],
+                            'type_arg' => (int)$row['type_arg'],
+                            'family'   => (int)$row['family'],
+                        ];
+                    }
+                }
+                $upgradeOptions[(int)$origCardId] = $details;
+            }
+            $result['upgrade_center_cards'] = $centerCards;
+            $result['upgrade_options']      = $upgradeOptions;
+
+            $allChoices = (array)($this->bga->globals->get('upgrade_choices') ?? []);
+            $result['upgrade_saved_choices'] = (array)($allChoices[$pid] ?? $allChoices[(string)$pid] ?? []);
+        }
 
         // Shared pile sizes (Bronze / Silver / Gold)
         $sharedRows = $this->getCollectionFromDb(
@@ -169,6 +229,11 @@ class Game extends \Bga\GameFramework\Table
         foreach ($personalRows as $key => $row) {
             $result['personal_deck_sizes'][(int)$key] = (int)$row['cnt'];
         }
+
+        // Active player tokens (gambler + pirate_gold) — always visible to all
+        $result['tokens'] = array_values($this->getCollectionFromDb(
+            "SELECT player_id, grid_position, token_type, value FROM bc_token WHERE player_id != 0"
+        ));
 
         // Round / turn / turn-order globals
         $result['round_number']        = (int)($this->bga->globals->get('round_number')        ?? 1);

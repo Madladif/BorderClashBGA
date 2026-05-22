@@ -14,14 +14,41 @@ class SilverDraft extends GameState
 {
     public function __construct(protected Game $game)
     {
-        parent::__construct($game, id: 13, type: StateType::MULTIPLE_ACTIVE_PLAYER);
+        parent::__construct($game,
+            id: 13,
+            type: StateType::MULTIPLE_ACTIVE_PLAYER,
+            description: clienttranslate('${actplayer} must pick a Silver card'),
+            descriptionMyTurn: clienttranslate('${you} must pick a Silver card to keep'),
+        );
     }
 
     // Cards are pre-placed in 'draft' (arg = player_id) by setupNewGame (round 1)
     // or by SilverDraftNext when re-entering for round 2.
+    // Sends a private draftCardsDealt notification so the client gets draft cards reliably,
+    // even when BGA's MULTIPLE_ACTIVE_PLAYER private args are not forwarded correctly.
     public function onEnteringState(): void
     {
         $this->gamestate->setAllPlayersMultiactive();
+
+        $draftRound = (int)($this->game->bga->globals->get('draft_round') ?? 1);
+        $players    = $this->game->getCollectionFromDb("SELECT player_id FROM player");
+        foreach (array_keys($players) as $playerId) {
+            $pid       = (int)$playerId;
+            $draftData = array_values($this->game->getCollectionFromDb(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+                 FROM bc_card WHERE card_location = 'draft' AND card_location_arg = {$pid}"
+            ));
+            $deckData  = array_values($this->game->getCollectionFromDb(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+                 FROM bc_card WHERE card_location = 'deck' AND card_location_arg = {$pid}
+                 ORDER BY card_type ASC, card_type_arg ASC"
+            ));
+            $this->game->bga->notify->player($pid, 'draftCardsDealt', '', [
+                'draft_cards' => $draftData,
+                'deck_cards'  => $deckData,
+                'draft_round' => $draftRound,
+            ]);
+        }
     }
 
     // Private args: current player's draft hand + which pass round (1 or 2).
@@ -128,14 +155,4 @@ class SilverDraft extends GameState
         $this->gamestate->setPlayerNonMultiactive($pid, SilverDraftNext::class);
     }
 
-    // "Left" = next player in the anticlockwise player_order array.
-    private function getLeftNeighborId(int $pid): int
-    {
-        $playerOrder = array_map('intval', (array)($this->game->bga->globals->get('player_order') ?? []));
-        $idx         = array_search($pid, $playerOrder, true);
-        if ($idx === false || count($playerOrder) < 2) {
-            return $pid;
-        }
-        return $playerOrder[($idx + 1) % count($playerOrder)];
-    }
 }

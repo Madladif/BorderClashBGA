@@ -62,21 +62,36 @@ class RevealAndResolve extends GameState
             $centerCard = $this->getCardAt($pid, $centerPos);
             if (!$centerCard || !(int)$centerCard['face_up']) continue;
 
+            $gemsBefore = $this->game->gemsCharged->get($pid);
             $res = CardEffects::applyEffect(
                 $centerCard, $pid, $centerPos, 'influence',
                 null, null, null,
                 $this->game
             );
 
-            $this->broadcastRageToggle($pid, $res);
-            $this->broadcastGemUpdated($pid);
+            // Announce the effect FIRST so the player reads it before state changes appear
+            $cardName = CardEffects::getName((int)$centerCard['type'], (int)$centerCard['type_arg']);
+            $this->game->bga->notify->all('influenceResolved',
+                clienttranslate('${player_name}\'s ${card_name} applies its influence effect'),
+                [
+                    'player_id'      => $pid,
+                    'player_name'    => $this->game->getPlayerNameById($pid),
+                    'card_id'        => (int)$centerCard['id'],
+                    'card_name'      => $cardName,
+                    'effect_type'    => "{$centerCard['type']}:{$centerCard['type_arg']}",
+                    'dice_roll'      => $res['dice_roll'],
+                    'strength_bonus' => $res['strength_bonus'],
+                    'vp_bonus'       => $res['vp_bonus'],
+                    'effect_desc'    => $res['effect_text'] ?? '—',
+                    'rage_toggle'    => $res['rage_toggle'],
+                ]
+            );
 
-            $this->game->bga->notify->all('influenceResolved', '', [
-                'player_id'   => $pid,
-                'card_id'     => (int)$centerCard['id'],
-                'effect_type' => "{$centerCard['type']}:{$centerCard['type_arg']}",
-                'dice_roll'   => $res['dice_roll'],
-            ]);
+            // State changes arrive AFTER the effect badge (client processes queue in order)
+            if ($this->game->gemsCharged->get($pid) !== $gemsBefore) {
+                $this->broadcastGemUpdated($pid);
+            }
+            $this->broadcastTokensSync($pid);
 
             if ($res['vp_bonus'] > 0) {
                 $this->game->bga->playerScore->inc($pid, $res['vp_bonus']);
@@ -119,28 +134,42 @@ class RevealAndResolve extends GameState
             if (!(int)$leftCard['face_up'] || !(int)$rightCard['face_up']) continue;
 
             // Apply effects: left player first (per rules), then right player
+            $gemsBeforeLeft = $this->game->gemsCharged->get($leftPid);
             $lRes = CardEffects::applyEffect(
                 $leftCard, $leftPid, $leftPos, 'combat',
                 $rightCard, $rightPid, $rightPos,
                 $this->game
             );
-            $this->broadcastRageToggle($leftPid, $lRes);
-            $this->broadcastGemUpdated($leftPid);
+            if ($this->game->gemsCharged->get($leftPid) !== $gemsBeforeLeft) {
+                $this->broadcastGemUpdated($leftPid);
+            }
 
+            $gemsBeforeRight = $this->game->gemsCharged->get($rightPid);
             $rRes = CardEffects::applyEffect(
                 $rightCard, $rightPid, $rightPos, 'combat',
                 $leftCard, $leftPid, $leftPos,
                 $this->game
             );
-            $this->broadcastRageToggle($rightPid, $rRes);
-            $this->broadcastGemUpdated($rightPid);
+            if ($this->game->gemsCharged->get($rightPid) !== $gemsBeforeRight) {
+                $this->broadcastGemUpdated($rightPid);
+            }
 
-            // Re-read cards (Mousse may have flipped face-down)
-            $leftCard  = $this->getCardAt($leftPid, $leftPos);
-            $rightCard = $this->getCardAt($rightPid, $rightPos);
+            // Re-read cards (Mousse may have flipped face-down during effect)
+            $leftCard  = $this->getCardAt($leftPid,  $leftPos)  ?? $leftCard;
+            $rightCard = $this->getCardAt($rightPid, $rightPos) ?? $rightCard;
 
             $lStr = $this->calcStrength($leftPid,  $leftPos,  $leftCard,  $lRes);
             $rStr = $this->calcStrength($rightPid, $rightPos, $rightCard, $rRes);
+
+            // Announce combat sequence: start → effects → result
+            $this->notifyCombatStart(
+                $leftPid,  $this->game->getPlayerNameById($leftPid),
+                CardEffects::getName((int)$leftCard['type'],  (int)$leftCard['type_arg']),
+                $rightPid, $this->game->getPlayerNameById($rightPid),
+                CardEffects::getName((int)$rightCard['type'], (int)$rightCard['type_arg'])
+            );
+            $this->notifyCombatEffect($leftCard,  $leftPid,  $leftPos,  $lRes, $lStr);
+            $this->notifyCombatEffect($rightCard, $rightPid, $rightPos, $rRes, $rStr);
 
             // Award differential points
             $diff     = abs($lStr - $rStr);
@@ -182,7 +211,18 @@ class RevealAndResolve extends GameState
                 $this->game->bga->playerScore->inc($rightPid, $rRes['vp_bonus']);
             }
 
-            $this->game->bga->notify->all('combatResolved', '', [
+            if ($winnerId !== null) {
+                $combatMsg  = clienttranslate('${player_name} wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
+                $combatPid  = $winnerId;
+                $combatName = $this->game->getPlayerNameById($winnerId);
+            } else {
+                $combatMsg  = clienttranslate('Tie (${left_strength} vs ${right_strength})');
+                $combatPid  = 0;
+                $combatName = '';
+            }
+            $this->game->bga->notify->all('combatResolved', $combatMsg, [
+                'player_id'       => $combatPid,
+                'player_name'     => $combatName,
                 'left_player_id'  => $leftPid,
                 'right_player_id' => $rightPid,
                 'left_position'   => $leftPos,
@@ -227,6 +267,17 @@ class RevealAndResolve extends GameState
             'player_id' => $pid,
             'charged'   => $this->game->gemsCharged->get($pid),
             'uncharged' => $this->game->gemsUncharged->get($pid),
+        ]);
+    }
+
+    private function broadcastTokensSync(int $pid): void
+    {
+        $tokens = $this->game->getCollectionFromDb(
+            "SELECT grid_position, token_type, value FROM bc_token WHERE player_id = {$pid}"
+        );
+        $this->game->bga->notify->all('tokensSyncPlayer', '', [
+            'player_id' => $pid,
+            'tokens'    => array_values($tokens),
         ]);
     }
 
@@ -325,19 +376,31 @@ class RevealAndResolve extends GameState
         }
 
         // Player effect
+        $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
         $pRes = CardEffects::applyEffect(
             $playerCard, $pid, $playerPos, 'combat',
             $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos,
             $this->game
         );
-        $this->broadcastRageToggle($pid, $pRes);
-        $this->broadcastGemUpdated($pid);
+        if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
+            $this->broadcastGemUpdated($pid);
+        }
 
-        // Re-read player card (Mousse may have flipped face-down)
-        $playerCard = $this->getCardAt($pid, $playerPos);
+        // Re-read player card (Mousse may have flipped face-down during effect)
+        $playerCard = $this->getCardAt($pid, $playerPos) ?? $playerCard;
 
         $botStr = $this->calcBotStrength($side, $row, $botCard, $bRes);
         $pStr   = $this->calcStrength($pid, $playerPos, $playerCard, $pRes);
+
+        // Announce combat sequence: start → effects → result
+        $this->notifyCombatStart(
+            CardEffects::BOT_PLAYER_ID, clienttranslate('Bot'),
+            CardEffects::getName((int)$botCard['type'],    (int)$botCard['type_arg']),
+            $pid, $this->game->getPlayerNameById($pid),
+            CardEffects::getName((int)$playerCard['type'], (int)$playerCard['type_arg'])
+        );
+        $this->notifySoloCombatEffect($botCard,    $side, $row,       $bRes, $botStr);
+        $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
 
         $diff     = abs($botStr - $pStr);
         $winnerId = null;
@@ -380,7 +443,22 @@ class RevealAndResolve extends GameState
             $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
         }
 
-        $this->game->bga->notify->all('combatResolved', '', [
+        if ($winnerId === $pid) {
+            $combatMsg  = clienttranslate('${player_name} wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
+            $combatPid  = $pid;
+            $combatName = $this->game->getPlayerNameById($pid);
+        } elseif ($winnerId === CardEffects::BOT_PLAYER_ID) {
+            $combatMsg  = clienttranslate('Bot wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
+            $combatPid  = 0;
+            $combatName = clienttranslate('Bot');
+        } else {
+            $combatMsg  = clienttranslate('Tie (${left_strength} vs ${right_strength})');
+            $combatPid  = 0;
+            $combatName = '';
+        }
+        $this->game->bga->notify->all('combatResolved', $combatMsg, [
+            'player_id'       => $combatPid,
+            'player_name'     => $combatName,
             'left_player_id'  => CardEffects::BOT_PLAYER_ID,
             'right_player_id' => $pid,
             'left_position'   => $botGridPos,
@@ -409,6 +487,122 @@ class RevealAndResolve extends GameState
              FROM bc_card WHERE card_location = '{$loc}' AND card_location_arg = {$row}"
         );
         return !empty($data) ? $data : null;
+    }
+
+    // Notify a single player card's combat effect (multiplayer and player side of solo).
+    private function notifyCombatEffect(array $card, int $pid, int $pos, array $res, int $finalStrength): void
+    {
+        $cardName = CardEffects::getName((int)$card['type'], (int)$card['type_arg']);
+        $desc     = $this->effectDesc($res);
+        $msg      = $desc === '—'
+            ? clienttranslate('${player_name}\'s ${card_name}: ⚔ ${final_strength}')
+            : clienttranslate('${player_name}\'s ${card_name}: ${effect_desc} → ⚔ ${final_strength}');
+
+        // Dice animation fires first so client shows the roll before seeing tokens or strength.
+        if (!empty($res['dice_roll'])) {
+            $this->game->bga->notify->all('combatDiceRolled', '', [
+                'player_id' => $pid,
+                'dice_roll' => (int)$res['dice_roll'],
+                'position'  => $pos,
+            ]);
+        }
+
+        // Token sync: tokens from this effect appear after dice animation, before the badge.
+        $this->broadcastTokensSync($pid);
+
+        $this->game->bga->notify->all('combatEffectApplied', $msg, [
+            'player_id'      => $pid,
+            'player_name'    => $this->game->getPlayerNameById($pid),
+            'card_id'        => (int)$card['id'],
+            'card_name'      => $this->coloredName($cardName, $this->getPlayerColor($pid)),
+            'position'       => $pos,
+            'effect_type'    => "{$card['type']}:{$card['type_arg']}",
+            'effect_desc'    => $desc,
+            'final_strength' => $finalStrength,
+            'dice_roll'      => $res['dice_roll'],
+            'strength_bonus' => $res['strength_bonus'],
+            'vp_bonus'       => $res['vp_bonus'],
+            'after_combat'   => $res['after_combat'],
+            'rage_toggle'    => $res['rage_toggle'] ?? null,
+        ]);
+
+        // Mousse (1:5) flips face-down when on a border — animate the flip on the client
+        if ($res['card_flipped_face_down'] ?? false) {
+            $this->game->bga->notify->all('cardFlippedFaceDown', '', [
+                'player_id' => $pid,
+                'card_id'   => (int)$card['id'],
+                'position'  => $pos,
+                'family'    => (int)$card['family'],
+            ]);
+        }
+    }
+
+    // Notify a bot card's combat effect (solo mode only).
+    private function notifySoloCombatEffect(array $botCard, string $side, int $row, array $res, int $finalStrength): void
+    {
+        $cardName   = CardEffects::getName((int)$botCard['type'], (int)$botCard['type_arg']);
+        $botGridPos = CardEffects::botGridPos($side, $row);
+        $desc       = $this->effectDesc($res);
+        $msg        = $desc === '—'
+            ? clienttranslate('Bot\'s ${card_name}: ⚔ ${final_strength}')
+            : clienttranslate('Bot\'s ${card_name}: ${effect_desc} → ⚔ ${final_strength}');
+        $this->game->bga->notify->all('combatEffectApplied', $msg, [
+            'player_id'      => CardEffects::BOT_PLAYER_ID,
+            'player_name'    => clienttranslate('Bot'),
+            'card_id'        => (int)$botCard['id'],
+            'card_name'      => $this->coloredName($cardName, $this->getPlayerColor(CardEffects::BOT_PLAYER_ID)),
+            'position'       => $botGridPos,
+            'effect_type'    => "{$botCard['type']}:{$botCard['type_arg']}",
+            'effect_desc'    => $desc,
+            'final_strength' => $finalStrength,
+            'dice_roll'      => $res['dice_roll'],
+            'strength_bonus' => $res['strength_bonus'],
+            'vp_bonus'       => $res['vp_bonus'],
+            'after_combat'   => $res['after_combat'],
+            'solo_combat'    => true,
+            'bot_side'       => $side,
+            'bot_row'        => $row,
+        ]);
+    }
+
+    private function getPlayerColor(int $pid): string
+    {
+        if ($pid === CardEffects::BOT_PLAYER_ID) {
+            return '999999';
+        }
+        $row = $this->game->getObjectFromDB(
+            "SELECT player_color FROM player WHERE player_id = {$pid}"
+        );
+        return (string)($row['player_color'] ?? 'ffffff');
+    }
+
+    private function coloredName(string $name, string $color): string
+    {
+        return '<b style="color:#' . $color . '">' . $name . '</b>';
+    }
+
+    private function effectDesc(array $res): string
+    {
+        return $res['effect_text'] ?? '—';
+    }
+
+    private function notifyCombatStart(
+        int $leftPid,  string $leftName,  string $leftCardName,
+        int $rightPid, string $rightName, string $rightCardName
+    ): void {
+        $leftColor  = $this->getPlayerColor($leftPid);
+        $rightColor = $this->getPlayerColor($rightPid);
+        $this->game->bga->notify->all('combatStarted',
+            clienttranslate('${left_player_name}\'s ${left_card_name} vs ${right_player_name}\'s ${right_card_name}'),
+            [
+                'left_player_id'    => $leftPid,
+                'left_player_name'  => $this->coloredName($leftName,      $leftColor),
+                'left_card_name'    => $this->coloredName($leftCardName,  $leftColor),
+                'right_player_id'   => $rightPid,
+                'right_player_name' => $this->coloredName($rightName,     $rightColor),
+                'right_card_name'   => $this->coloredName($rightCardName, $rightColor),
+            ]
+        );
     }
 
     private function calcBotStrength(string $side, int $row, array $botCard, array $res): int

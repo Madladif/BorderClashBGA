@@ -16,41 +16,86 @@ class SilverDraft {
     this.game = game;
     this.bga = bga;
     this._pid = null;
-    this._selected = null; // selected card ID (integer)
-    this._selectedEl = null; // direct DOM reference to the highlighted card element
-    this._pendingCards = null; // cards received via silverCardsReceived, used as fallback for pass 2
-    this._draftFanStock = null; // LineStock for the fan — persists between passes
+    this._selected = null;
+    this._selectedEl = null;
+    this._draftFanStock = null;
+    this._draftRound = 1;
+    this._deckCards = [];
+    this._buildSeq = 0;
+    this._confirmedThisSession = false; // set when actPickSilver is confirmed mid-session
   }
 
-  onEnteringState(args, isCurrentPlayerActive) {
-    console.log("gamedatas", this.game.gamedatas);
-    this.onPlayerActivationChange(args, isCurrentPlayerActive);
+  async onEnteringState(args, isCurrentPlayerActive) {
+    if (!isCurrentPlayerActive) return;
+    // Reliable fallback for pass 1: if the SDK didn't fire onPlayerActivationChange with
+    // real args yet, seed _build() from gamedatas (page-load snapshot — valid for pass 1).
+    // Guard: only use gamedatas if draft_round matches (avoids stale pass-1 data on pass 2).
+    const gd = this.game.gamedatas;
+    const gdRound = gd?.draft_round ?? 1;
+    const draftCards = args?.draft_cards ?? (gdRound === 1 ? (gd?.draft_cards ?? []) : []);
+    const deckCards  = args?.deck_cards  ?? (gdRound === 1 ? (gd?.deck_cards  ?? []) : []);
+    const draftRound = args?.draft_round ?? gdRound;
+
+    if (draftCards.length > 0) {
+      await this._build(draftCards, deckCards, draftRound);
+    }
   }
 
-  onPlayerActivationChange(args, isCurrentPlayerActive) {
+  async onPlayerActivationChange(args, isCurrentPlayerActive) {
     if (!isCurrentPlayerActive) {
       document.getElementById("btn-bc-draft-confirm")?.remove();
       document.getElementById("bc-draft-ui")?.remove();
-      this.bga.statusBar.setTitle(_("${actplayer} is picking a Silver card…"));
+      this.bga.statusBar.setTitle(_("Waiting for other players…"));
+      // F5 after confirming pick: show remaining draft cards (read-only) + rebuild deck fan.
+      // Skip if confirmed mid-session (hand and fan are already correct from _confirm()).
+
+      if (!this._confirmedThisSession) {
+        this._pid = this.game._currentPlayerPid();
+        const waitingCards = (this.game.gamedatas.draft_cards ?? []).map((c) => ({
+          id: parseInt(String(c.id), 10), type: c.type, type_arg: c.type_arg, family: c.family,
+        }));
+        const handStock = this.game._handStocks[this._pid];
+        if (handStock && handStock.getCards().length === 0 && waitingCards.length > 0) {
+          await handStock.addCards(waitingCards);
+        }
+        // Rebuild deck fan (includes the card just kept) if it was lost on reload.
+        if (!this._draftFanStock) {
+          const deckCards = (this.game.gamedatas.deck_cards ?? []).map((c) => ({
+            id: parseInt(String(c.id), 10), type: c.type, type_arg: c.type_arg, family: c.family,
+          }));
+          if (deckCards.length > 0) {
+            await this._buildDeckFan(deckCards);
+          }
+        }
+      }
       return;
     }
-    this._teardown();
-    // Priority: args.draft_cards (live) → _pendingCards (from silverCardsReceived, pass 2)
-    // → gamedatas.draft_cards (page-load snapshot, correct only for pass 1).
-    const draftCards = args.draft_cards?.length > 0 ? args.draft_cards : this._pendingCards !== null ? this._pendingCards : this.game.gamedatas?.draft_cards || [];
-    this._pendingCards = null;
-    const deckCards = args.deck_cards || this.game.gamedatas?.deck_cards || [];
-    this._build(draftCards, deckCards, args.draft_round || 1);
+    // Active player: only build if the SDK provided real args (not a gamedatas fallback).
+    // gamedatas is a stale page-load snapshot — during pass 1→2, it still has pass-1 cards.
+    // notif_draftCardsDealt is always sent and is the authoritative delivery path.
+    const draftCards = args?.draft_cards ?? [];
+    const deckCards  = args?.deck_cards  ?? [];
+    const draftRound = args?.draft_round ?? 1;
+
+    if (draftCards.length > 0) {
+      await this._build(draftCards, deckCards, draftRound);
+    }
+    // No cards in args → notif_draftCardsDealt will call _build() momentarily.
   }
 
-  onLeavingState() {
+  async onLeavingState() {
     // Fan zone intentionally NOT removed here — persists between draft passes.
     // Destroyed in notif_silverDraftComplete once the full draft is over.
-    this._teardown(); // clears _selected/_selectedEl, removes handlers — must run before _pid is cleared
+    await this._teardown(); // clears _selected/_selectedEl, removes handlers — must run before _pid is cleared
     this._pid = null;
+    this._buildSeq = 0;
+    // Do NOT reset _confirmedThisSession here — it must stay true during the pass 1→2
+    // transition so that the non-active branch of onPlayerActivationChange does not
+    // re-add stale gamedatas.draft_cards (the pass-1 snapshot) to the now-empty hand.
+    // It is reset in onEnteringState via _build() indirectly, or when the full draft ends.
   }
 
-  _teardown() {
+  async _teardown() {
     document.getElementById("bc-draft-ui")?.remove();
     document.getElementById("btn-bc-draft-confirm")?.remove();
     if (this._pid) {
@@ -63,7 +108,7 @@ class SilverDraft {
             delete el._bcDraftClick;
           }
         }
-        handStock.removeAll();
+        await handStock.removeAll();
       }
     }
     this._selected = null;
@@ -71,9 +116,9 @@ class SilverDraft {
   }
 
   async _build(draftCards, deckCards, draftRound) {
+    const seq = ++this._buildSeq;
     this._pid = this.game._currentPlayerPid();
     this._selected = null;
-
     const handStock = this.game._handStocks[this._pid];
     if (handStock) {
       await handStock.removeAll(); // clear any leftovers
@@ -88,7 +133,7 @@ class SilverDraft {
 
       // Slide cards in from the right (cards are in DOM, now animate entry)
       // Keep id alongside el so dataset.cardId comes from the card object, not el.id parsing.
-      const cardElPairs = cardObjs.map((c) => ({ id: parseInt(String(c.id), 10), el: this.game.cardManager.getCardElement(c) })).filter(({ el }) => el);
+      const cardElPairs = cardObjs.map((c) => ({ id: parseInt(String(c.id), 10), card: c, el: this.game.cardManager.getCardElement(c) })).filter(({ el }) => el);
       const els = cardElPairs.map(({ el }) => el);
       els.forEach((el) => {
         el.classList.add("bc-draft-card");
@@ -103,45 +148,20 @@ class SilverDraft {
       });
 
       // Direct per-element listeners — dataset.cardId set from card object (never from el.id).
-      cardElPairs.forEach(({ id, el }) => {
+      cardElPairs.forEach(({ id, card, el }) => {
         el.dataset.cardId = String(id);
         if (el._bcDraftClick) {
           el.removeEventListener("click", el._bcDraftClick);
         }
         el._bcDraftClick = () => this._onCardClick(el);
         el.addEventListener("click", el._bcDraftClick);
+        if (el?.id) this.game.bga.gameui?.addTooltipHtml?.(el.id, this.game._cardTooltipHtml(card));
       });
     }
 
     // Deck fan: created once for pass 1; pass 2 reuses the same stock.
     if (!this._draftFanStock) {
-      const playerBoard = document.querySelector(`.bc-player-board[data-player-id="${this._pid}"]`);
-      if (playerBoard) {
-        playerBoard.insertAdjacentHTML(
-          "beforeend",
-          `
-          <div id="bc-draft-deck-${this._pid}" class="bc-draft-deck-area">
-            <div class="bc-draft-deck-label">${_("Deck")} (${deckCards.length})</div>
-            <div class="bc-draft-deck-fan" id="bc-draft-fan-${this._pid}"></div>
-          </div>
-        `,
-        );
-        const fanEl = document.getElementById(`bc-draft-fan-${this._pid}`);
-        this._draftFanStock = new BgaCards.LineStock(this.game.cardManager, fanEl, {
-          direction: "column",
-          gap: "0",
-        });
-        const deckCardObjs = deckCards.map((c) => ({
-          id: parseInt(String(c.id), 10),
-          type: c.type,
-          type_arg: c.type_arg,
-          family: c.family,
-        }));
-        if (deckCardObjs.length > 0) {
-          await this._draftFanStock.addCards(deckCardObjs);
-        }
-        this._updateFanLabel();
-      }
+      await this._buildDeckFan(deckCards);
     }
 
     this.bga.gameArea.getElement().insertAdjacentHTML(
@@ -198,7 +218,35 @@ class SilverDraft {
       this._updateFanLabel();
     }
 
+    this._confirmedThisSession = true;
     this.bga.actions.performAction("actPickSilver", { keptCardId });
+  }
+
+  async _buildDeckFan(deckCards) {
+    const playerBoard = document.querySelector(`.bc-player-board[data-player-id="${this._pid}"]`);
+    if (!playerBoard) return;
+    playerBoard.insertAdjacentHTML(
+      "beforeend",
+      `<div id="bc-draft-deck-${this._pid}" class="bc-draft-deck-area">
+        <div class="bc-draft-deck-label">${_("Deck")} (${deckCards.length})</div>
+        <div class="bc-draft-deck-fan" id="bc-draft-fan-${this._pid}"></div>
+      </div>`,
+    );
+    const fanEl = document.getElementById(`bc-draft-fan-${this._pid}`);
+    this._draftFanStock = new BgaCards.LineStock(this.game.cardManager, fanEl, {
+      direction: "column",
+      gap: "0",
+    });
+    const deckCardObjs = deckCards.map((c) => ({
+      id: parseInt(String(c.id), 10),
+      type: c.type,
+      type_arg: c.type_arg,
+      family: c.family,
+    }));
+    if (deckCardObjs.length > 0) {
+      await this._draftFanStock.addCards(deckCardObjs);
+    }
+    this._updateFanLabel();
   }
 
   _updateFanLabel() {
@@ -224,6 +272,7 @@ class Deploy {
     this._mulliganMode = false;
     this._myPid = null;
     this._handBuildSeq = 0;
+    this._pendingHandArgs = null; // set by notif_handDealt if it arrives before onPlayerActivationChange
   }
 
   onEnteringState(args, isActive) {
@@ -235,26 +284,6 @@ class Deploy {
 
   async onPlayerActivationChange(args, isCurrentPlayerActive) {
     await this._teardown();
-
-    // Sync all grid cards from gamedatas — idempotent (skips slots already occupied).
-    // Handles F5 reload when setup() may have used wrong field name (card.card_id bug).
-    // Previous-turn rows: face-up (PHP sends type). Current-turn opponent rows: face-down (type=null).
-    // Active player's own current-turn cards are in hand (not yet deployed), so nothing to restore.
-    for (const card of this.game.gamedatas.grid_cards || []) {
-      const pidStr = card.card_location.replace("grid_", "");
-      const gridStock = this.game._gridStocks[pidStr];
-      if (!gridStock) continue;
-      const pos = parseInt(String(card.position), 10);
-      if (gridStock.getCards().some((c) => c.position === pos)) continue; // already present
-      gridStock.addCard({
-        id: parseInt(String(card.id), 10),
-        type: card.type || null,
-        type_arg: card.type_arg || null,
-        family: card.family || null,
-        position: pos,
-      });
-      this.game._updateFlankMirror(pidStr, pos, card);
-    }
 
     if (!isCurrentPlayerActive) {
       this.bga.statusBar.setTitle(_("Waiting for other players to deploy…"));
@@ -268,6 +297,11 @@ class Deploy {
     if (args.hand?.length > 0) {
       // BGA SDK forwarded private args — use them directly.
       await this._buildHand(args.hand, args.deck_count ?? 0, args.gems_charged ?? 0);
+    } else if (this._pendingHandArgs) {
+      // notif_handDealt arrived before onPlayerActivationChange — use its data now.
+      const pending = this._pendingHandArgs;
+      this._pendingHandArgs = null;
+      await this._buildHand(pending.hand, pending.deck_count, pending.gems_charged);
     } else if (!this._handDealtThisSession) {
       // F5 reload: onEnteringState (server) does not re-fire, so notif_handDealt never arrives.
       // gamedatas.hand is freshly queried by getAllDatas() on every page load, so it is correct.
@@ -281,8 +315,7 @@ class Deploy {
         await this._buildHand(hand, deckCount, gemsCharged);
       }
     }
-    // else: _handDealtThisSession is true → mid-session turn transition,
-    // notif_handDealt will arrive shortly with fresh data.
+    // else: _handDealtThisSession is true and no pending data → notif_handDealt will arrive shortly.
   }
 
   onLeavingState() {
@@ -303,6 +336,7 @@ class Deploy {
     for (const slot of ["col1", "col2", "col3"]) {
       document.getElementById(`btn-bc-slot-${slot}`)?.remove();
     }
+    this._hideSlotButtons(); // also clears any cell click listeners on the active row
   }
 
   _build() {
@@ -346,11 +380,13 @@ class Deploy {
     document.getElementById(`bc-deck-pile-${this._myPid}`)?.remove();
     const handArea = document.getElementById(`bc-hand-area-${this._myPid}`);
     if (deckCount > 0 && handArea) {
-      handArea.insertAdjacentHTML(
+      const myFamily = hand.length > 0 ? parseInt(String(hand[0].family), 10) : 0;
+      const handRow = handArea.parentElement; // bc-hand-row
+      handRow?.insertAdjacentHTML(
         "afterbegin",
         `
         <div class="bc-deck-pile" id="bc-deck-pile-${this._myPid}">
-          <div class="bc-card bc-card-hidden">▪</div>
+          ${this.game._cardHtml({ family: myFamily })}
           <span class="bc-deck-count-badge">${deckCount}</span>
         </div>
       `,
@@ -367,17 +403,23 @@ class Deploy {
     await handStock.addCards(cardObjs, deckPileEl ? { fromElement: deckPileEl } : undefined);
     if (seq !== this._handBuildSeq) return; // aborted by a newer call
 
+    // Ensure hand cards are rendered face-up even if the manager reused a previously hidden element.
+    for (const cardObj of cardObjs) {
+      this.game.cardManager.setCardVisible(cardObj, true);
+    }
+
     for (const cardObj of cardObjs) {
       const el = this.game.cardManager.getCardElement(cardObj);
       if (el) {
         el.classList.add("bc-hand-card");
         el.dataset.cardId = String(cardObj.id);
         el.onclick = (e) => this._onCardClick(e); // onclick prevents duplicate listeners
+        if (el?.id) this.game.bga.gameui?.addTooltipHtml?.(el.id, this.game._cardTooltipHtml(cardObj));
       }
     }
 
     document.getElementById("btn-bc-mulligan")?.remove();
-    if (gemsCharged > 0) {
+    if (gemsCharged > 0 && (this.game._currentTurn || 1) < 3) {
       this.bga.statusBar.addActionButton(_("Mulligan (1 gem)"), () => this._startMulligan(), { id: "btn-bc-mulligan", color: "secondary" });
     }
   }
@@ -432,6 +474,29 @@ class Deploy {
         id: `btn-bc-slot-${slot}`,
       });
     }
+
+    const gridEl = document.getElementById(`bc-grid-${this._myPid}`);
+    if (!gridEl) return;
+
+    const row = (this.game._currentTurn || 1) - 1;
+    const colNames = ["col1", "col2", "col3"];
+
+    // Highlight all 3 active-row cells (filled cells too — clicking displaces existing card)
+    for (let col = 0; col < 3; col++) {
+      gridEl.querySelector(`[data-slot-id="${row * 3 + col}"]`)?.classList.add("bc-deploy-cell-active");
+    }
+
+    // Single delegated handler: closest() climbs the DOM so it works regardless of nesting depth
+    const handler = (e) => {
+      const slotEl = e.target.closest("[data-slot-id]");
+      if (!slotEl) return;
+      const pos = parseInt(slotEl.dataset.slotId, 10);
+      const col = pos - row * 3;
+      if (col < 0 || col > 2) return;
+      this._assignSlot(colNames[col], cardId);
+    };
+    gridEl._bcDeployGridHandler = handler;
+    gridEl.addEventListener("click", handler);
   }
 
   _hideSlotButtons() {
@@ -439,6 +504,18 @@ class Deploy {
       document.getElementById(`btn-bc-slot-${slot}`)?.remove();
     }
     document.getElementById("btn-bc-deploy")?.remove();
+
+    const gridEl = document.getElementById(`bc-grid-${this._myPid}`);
+    if (!gridEl) return;
+
+    if (gridEl._bcDeployGridHandler) {
+      gridEl.removeEventListener("click", gridEl._bcDeployGridHandler);
+      delete gridEl._bcDeployGridHandler;
+    }
+    const row = (this.game._currentTurn || 1) - 1;
+    for (let col = 0; col < 3; col++) {
+      gridEl.querySelector(`[data-slot-id="${row * 3 + col}"]`)?.classList.remove("bc-deploy-cell-active");
+    }
   }
 
   _assignSlot(slot, cardId) {
@@ -457,7 +534,11 @@ class Deploy {
       gridStock.addCard({ ...card, position: pos }, { fromStock: handStock });
     }
 
-    this.game.cardManager.getCardElement({ id: cardId })?.classList.remove("bc-card-selected");
+    const movedEl = this.game.cardManager.getCardElement({ id: cardId });
+    if (movedEl) {
+      movedEl.classList.remove("bc-card-selected", "bc-hand-card");
+      movedEl.onclick = null;
+    }
 
     this._slots[slot] = cardId;
     this._cardSlot[cardId] = slot;
@@ -486,6 +567,12 @@ class Deploy {
     const card = gridStock?.getCards().find((c) => c.id === cardId);
     if (card && handStock) {
       handStock.addCard(card, { fromStock: gridStock });
+      const el = this.game.cardManager.getCardElement({ id: cardId });
+      if (el) {
+        el.classList.add("bc-hand-card");
+        el.dataset.cardId = String(cardId);
+        el.onclick = (e) => this._onCardClick(e);
+      }
     }
   }
 
@@ -531,29 +618,418 @@ class Deploy {
 }
 
 // ---------------------------------------------------------------------------
-// Upgrade state — MULTIPLE_ACTIVE_PLAYER (state 40)
+// Upgrade state — MULTIPLE_ACTIVE_PLAYER (state 40) — master state only
+// Flips border cards face-down on entry. All interactive logic is in private
+// states UpgradeMain (41) and UpgradePickReplacement (42).
 // ---------------------------------------------------------------------------
 
 class Upgrade {
   constructor(game, bga) {
     this.game = game;
     this.bga = bga;
-    this._choices = {};
-    this._gemsCharged = 0;
   }
 
   onEnteringState(args, isCurrentPlayerActive) {
+    console.log("[Upgrade] onEnteringState master", { isCurrentPlayerActive });
+    // Flip border cards face-down (private states will handle center cards)
+    const borderPos = new Set([0, 2, 3, 5, 6, 8]);
+    for (const gridStock of Object.values(this.game._gridStocks)) {
+      for (const card of gridStock.getCards()) {
+        if (borderPos.has(card.position)) {
+          this.game.cardManager.setCardVisible(card, false);
+        }
+      }
+    }
+    for (let row = 0; row < 3; row++) {
+      const left = document.getElementById(`bc-flank-left-${row}`);
+      const right = document.getElementById(`bc-flank-right-${row}`);
+      if (left) left.innerHTML = "";
+      if (right) right.innerHTML = "";
+    }
+    if (!isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(_("${actplayer} is upgrading their cards…"));
+    }
+  }
+
+  onPlayerActivationChange(args, isCurrentPlayerActive) {
+    if (!isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(_("${actplayer} is upgrading their cards…"));
+    }
+  }
+
+  onLeavingState() {}
+}
+
+// ---------------------------------------------------------------------------
+// UpgradeMain state — PRIVATE (state 41)
+// Each player independently selects an action for each face-up center card:
+//   • "Flip down for 1 gem"  → actFlipDown  → stays in UpgradeMain
+//   • "Spend 1 gem to upgrade" → actSpendGem → enters UpgradePickReplacement (42)
+// When all center cards are handled, player is deactivated automatically.
+// ---------------------------------------------------------------------------
+
+class UpgradeMainState {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+    this._centerCards = [];
+    this._upgradeOptions = {};
+    this._gemsCharged = 0;
+    this._gemsRemaining = 0;
+    this._gemsUncharged = 0;
+    this._visualCharged = 0;
+    this._selectedCardId = null;
+    this._myPid = null;
+  }
+
+  onEnteringState(args, isCurrentPlayerActive) {
+    console.log("[UpgradeMain] onEnteringState", { isCurrentPlayerActive, args });
+    this._teardown();
+    if (!isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(_("${actplayer} is upgrading their cards…"));
+      return;
+    }
+    this._myPid = this.game._currentPlayerPid();
+    // Args may arrive via notif_upgradeMainEntered or directly from BGA private state args
+    if ((args.center_cards || []).length > 0 || args.upgrade_options) {
+      this._applyArgs(args);
+      this._build();
+    }
+    // else: notif_upgradeMainEntered will arrive and call _build()
+  }
+
+  onPlayerActivationChange(args, isCurrentPlayerActive) {
+    if (!isCurrentPlayerActive) {
+      this._teardown();
+      this.bga.statusBar.setTitle(_("${actplayer} is upgrading their cards…"));
+    }
+  }
+
+  onLeavingState() {
+    this._teardown();
+  }
+
+  _applyArgs(args) {
+    this._centerCards = args.center_cards || [];
+    this._upgradeOptions = args.upgrade_options || {};
+    this._gemsCharged = args.gems_charged || 0;
+    this._gemsRemaining = this._gemsCharged;
+    this._gemsUncharged = args.gems_uncharged || 0;
+    this._visualCharged = this._gemsCharged;
+  }
+
+  _teardown() {
+    document.getElementById("bc-upgrade-ui")?.remove();
+    document.getElementById("btn-bc-flip-down")?.remove();
+    document.getElementById("btn-bc-spend-gem")?.remove();
+    // Remove selectable state from all center card elements
+    for (const card of this._centerCards) {
+      const cardEl = this.game.cardManager.getCardElement({ id: parseInt(String(card.id), 10) });
+      if (cardEl) {
+        cardEl.classList.remove("bc-upgrade-selectable", "bc-upgrade-selected", "bc-upgrade-chosen");
+        if (cardEl._bcUpgradeClick) {
+          cardEl.removeEventListener("click", cardEl._bcUpgradeClick);
+          delete cardEl._bcUpgradeClick;
+        }
+      }
+    }
+    this._centerCards = [];
+    this._selectedCardId = null;
+  }
+
+  _build() {
+    console.log("[UpgradeMain] _build()", { centerCards: this._centerCards });
+
+    // Re-sync gem display
+    this.game._updateGemDisplay(this._myPid, this._visualCharged, false);
+
+    // Already-produced cards: skip (face-down, not in center_cards anymore)
+    for (const card of this._centerCards) {
+      const cardId = parseInt(String(card.id), 10);
+      const cardEl = this.game.cardManager.getCardElement({ id: cardId });
+      if (!cardEl) continue;
+      cardEl.classList.add("bc-upgrade-selectable");
+      cardEl._bcUpgradeClick = () => this._onCardClick(cardId, cardEl);
+      cardEl.addEventListener("click", cardEl._bcUpgradeClick);
+    }
+
+    this.bga.gameArea.getElement().insertAdjacentHTML(
+      "beforeend",
+      `<div id="bc-upgrade-ui">
+        <p>${_("Gems charged")}: <strong id="bc-upgrade-gems">${this._gemsRemaining}</strong> — ${_("Click a center card to choose its action.")}</p>
+      </div>`,
+    );
+    this.bga.statusBar.setTitle(_("${you} must choose an action for each center card"));
+  }
+
+  _onCardClick(cardId, cardEl) {
+    if (this._selectedCardId === cardId) {
+      cardEl.classList.remove("bc-upgrade-selected");
+      this._selectedCardId = null;
+      document.getElementById("btn-bc-flip-down")?.remove();
+      document.getElementById("btn-bc-spend-gem")?.remove();
+      return;
+    }
+
+    // Deselect previous
+    if (this._selectedCardId !== null) {
+      const prevEl = this.game.cardManager.getCardElement({ id: this._selectedCardId });
+      prevEl?.classList.remove("bc-upgrade-selected");
+    }
+
+    this._selectedCardId = cardId;
+    cardEl.classList.add("bc-upgrade-selected");
+    document.getElementById("btn-bc-flip-down")?.remove();
+    document.getElementById("btn-bc-spend-gem")?.remove();
+
+    this.bga.statusBar.addActionButton(_("Flip down for 1 gem"), () => this._onFlipDown(cardId, cardEl), { id: "btn-bc-flip-down" });
+    const opts = this._upgradeOptions[cardId] || this._upgradeOptions[String(cardId)] || [];
+    if (this._gemsRemaining > 0 && opts.length > 0) {
+      this.bga.statusBar.addActionButton(_("Spend 1 gem to upgrade"), () => this._onSpendGem(cardId, cardEl), { id: "btn-bc-spend-gem" });
+    }
+  }
+
+  _onFlipDown(cardId, cardEl) {
+    // Animate flip + charge gem (visual-only; server confirms via notif)
+    const card = this._centerCards.find((c) => parseInt(String(c.id), 10) === cardId);
+    if (card) {
+      this.game.cardManager.setCardVisible({ id: card.id, type: card.type, type_arg: card.type_arg, family: card.family }, false);
+    }
+    if (this._gemsUncharged > 0) {
+      this._gemsUncharged--;
+      this.game._updateGemDisplay(this._myPid, ++this._visualCharged, true);
+    }
+    this._lockCard(cardEl);
+    document.getElementById("btn-bc-flip-down")?.remove();
+    document.getElementById("btn-bc-spend-gem")?.remove();
+    this._selectedCardId = null;
+
+    // Remove from local center list so remaining count is accurate
+    this._centerCards = this._centerCards.filter((c) => parseInt(String(c.id), 10) !== cardId);
+
+    this.bga.actions.performAction("actFlipDown", { cardId });
+  }
+
+  _onSpendGem(cardId, cardEl) {
+    document.getElementById("btn-bc-flip-down")?.remove();
+    document.getElementById("btn-bc-spend-gem")?.remove();
+
+    // Animate discharge gem + card flying out
+    this._gemsRemaining--;
+    this._visualCharged--;
+    const gemsEl = document.getElementById("bc-upgrade-gems");
+    if (gemsEl) gemsEl.textContent = this._gemsRemaining;
+    this.game._updateGemDisplay(this._myPid, this._visualCharged, true);
+
+    cardEl.style.transition = "transform 400ms ease-in, opacity 400ms ease-in";
+    cardEl.style.transform = "translateY(-70px)";
+    cardEl.style.opacity = "0";
+    this._lockCard(cardEl);
+    this._selectedCardId = null;
+
+    // Remove from local list — will be replaced when returning from UpgradePickReplacement
+    this._centerCards = this._centerCards.filter((c) => parseInt(String(c.id), 10) !== cardId);
+
+    this.bga.actions.performAction("actSpendGem", { cardId });
+    // BGA will push us into UpgradePickReplacement private state (onEnteringState fires)
+  }
+
+  _lockCard(cardEl) {
+    cardEl.classList.remove("bc-upgrade-selected", "bc-upgrade-selectable");
+    cardEl.classList.add("bc-upgrade-chosen");
+    if (cardEl._bcUpgradeClick) {
+      cardEl.removeEventListener("click", cardEl._bcUpgradeClick);
+      delete cardEl._bcUpgradeClick;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UpgradePickReplacement state — PRIVATE (state 42)
+// Player picks one of 3 replacement cards for the card they just upgraded.
+// After picking and confirming, returns to UpgradeMain (state 41).
+// ---------------------------------------------------------------------------
+
+class UpgradePickReplacementState {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+    this._origCardId = null;
+    this._position = null;
+    this._options = [];
+    this._chosenId = null;
+    this._myPid = null;
+  }
+
+  onEnteringState(args, isCurrentPlayerActive) {
+    console.log("[UpgradePickReplacement] onEnteringState", { isCurrentPlayerActive, args });
+    this._teardown();
+    if (!isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(_("${actplayer} is picking a replacement card…"));
+      return;
+    }
+    this._myPid = this.game._currentPlayerPid();
+    if (args.options && args.options.length > 0) {
+      this._applyArgs(args);
+      this._build();
+    }
+    // else: notif_upgradePickReplacementEntered will arrive
+  }
+
+  onPlayerActivationChange(args, isCurrentPlayerActive) {
+    if (!isCurrentPlayerActive) {
+      this._teardown();
+      this.bga.statusBar.setTitle(_("${actplayer} is picking a replacement card…"));
+    }
+  }
+
+  onLeavingState() {
+    this._teardown();
+  }
+
+  _applyArgs(args) {
+    this._origCardId = args.orig_card_id || null;
+    this._position = args.position ?? null;
+    this._options = args.options || [];
+    this._chosenId = null;
+  }
+
+  _teardown() {
+    document.getElementById("bc-upgrade-pick-ui")?.remove();
+    document.querySelectorAll(".bc-upgrade-opts-panel").forEach((el) => el.remove());
+    document.getElementById("btn-bc-upgrade-confirm")?.remove();
+    this._origCardId = null;
+    this._position = null;
+    this._options = [];
+    this._chosenId = null;
+  }
+
+  _build() {
+    console.log("[UpgradePickReplacement] _build()", { options: this._options });
+    if (this._options.length === 0) {
+      // No options — auto-confirm with nothing (edge case)
+      this.bga.actions.performAction("actPickReplacement", { chosenId: 0 });
+      return;
+    }
+
+    const handEl = document.getElementById(`bc-hand-area-${this._myPid}`);
+    if (!handEl) return;
+
+    const cardId = this._origCardId;
+    const optsHtml = this._options
+      .map((o) => {
+        const pos = this.game._spritePos(o.type, o.type_arg, o.family);
+        return `<div class="bc-card bc-upgrade-option bc-card-sprite bc-card-rank-${o.type}"
+                     id="bc-upgrade-opt-${o.id}"
+                     data-opt-id="${o.id}"
+                     style="background-position:${pos.x}px ${pos.y}px;
+                            opacity:0; transform:translateY(-24px)"></div>`;
+      })
+      .join("");
+
+    handEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="bc-upgrade-opts-panel" id="bc-upgrade-opts-${cardId}">
+         <div class="bc-upgrade-cards-options">${optsHtml}</div>
+       </div>`,
+    );
+
+    this._options.forEach((o, i) => {
+      const el = document.getElementById(`bc-upgrade-opt-${o.id}`);
+      if (!el) return;
+      if (el.id) this.game.bga.gameui?.addTooltipHtml?.(el.id, this.game._cardTooltipHtml(o));
+      el.addEventListener("click", () => this._onPick(o.id, el));
+      setTimeout(() => {
+        el.style.transition = "transform 280ms ease-out, opacity 280ms ease-out";
+        el.style.transform = "";
+        el.style.opacity = "";
+      }, i * 100);
+    });
+
+    this.bga.gameArea.getElement().insertAdjacentHTML("afterbegin", `<div id="bc-upgrade-pick-ui"></div>`);
+    this.bga.statusBar.setTitle(_("${you} must pick a replacement card"));
+  }
+
+  _onPick(optId, el) {
+    if (this._chosenId === optId) {
+      this._chosenId = null;
+      el.classList.remove("bc-option-selected");
+      document.getElementById("btn-bc-upgrade-confirm")?.remove();
+      return;
+    }
+    document.querySelectorAll(".bc-upgrade-option").forEach((e) => e.classList.remove("bc-option-selected"));
+    el.classList.add("bc-option-selected");
+    this._chosenId = optId;
+
+    document.getElementById("btn-bc-upgrade-confirm")?.remove();
+    this.bga.statusBar.addActionButton(_("Confirm"), () => this._confirm(), { id: "btn-bc-upgrade-confirm" });
+  }
+
+  async _confirm() {
+    if (!this._chosenId) return;
+    document.getElementById("btn-bc-upgrade-confirm")?.remove();
+    document.querySelectorAll(".bc-upgrade-option").forEach((e) => (e.style.pointerEvents = "none"));
+
+    // Animate chosen card: flip face-down then BgaCards slides it to the grid slot
+    const optEl = document.getElementById(`bc-upgrade-opt-${this._chosenId}`);
+    if (optEl && this._position !== null) {
+      // Phase 1: flip to face-down (rotateY 0→90, swap to card-back sprite, rotateY 90→0)
+      const cardFamily = parseInt(String(this._options.find((o) => o.id === this._chosenId)?.family ?? 1), 10);
+      const backX = -(11 * 167);
+      const backY = -((cardFamily - 1) * 119);
+      optEl.style.transition = "transform 180ms ease-in";
+      optEl.style.transform = "rotateY(90deg)";
+      await new Promise((r) => setTimeout(r, 185));
+      optEl.style.backgroundPosition = `${backX}px ${backY}px`;
+      optEl.style.transition = "transform 180ms ease-out";
+      optEl.style.transform = "rotateY(0deg)";
+      await new Promise((r) => setTimeout(r, 185));
+
+      // Phase 2: BgaCards animates the face-down card from optEl into the grid slot
+      const gridStock = this.game._gridStocks[this._myPid];
+      if (gridStock) {
+        const existing = gridStock.getCards().find((c) => c.id === this._chosenId);
+        if (!existing) {
+          await gridStock.addCard({ id: this._chosenId, position: this._position }, { fromElement: optEl });
+        }
+      }
+      document.getElementById(`bc-upgrade-opts-${this._origCardId}`)?.remove();
+    }
+
+    this.bga.actions.performAction("actPickReplacement", { chosenId: this._chosenId });
+    // BGA will push us back into UpgradeMain private state
+  }
+}
+
+// ---------------------------------------------------------------------------
+// (Legacy stub — kept so old notif handlers compile; not registered as state)
+class UpgradeCardsState {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+    this._pendingUpgrades = {};
+    this._choices = {};
+    this._myPid = null;
+  }
+
+  onEnteringState(args, isCurrentPlayerActive) {
+    console.log("[UpgradeCards] onEnteringState", { args, isCurrentPlayerActive });
     this.onPlayerActivationChange(args, isCurrentPlayerActive);
   }
 
   onPlayerActivationChange(args, isCurrentPlayerActive) {
     this._teardown();
     if (!isCurrentPlayerActive) {
-      this.bga.statusBar.setTitle(_("${actplayer} is upgrading their cards…"));
+      this.bga.statusBar.setTitle(_("${actplayer} is picking their replacement cards…"));
       return;
     }
-    this._gemsCharged = args.gems_charged || 0;
-    this._build(args.center_cards || [], args.upgrade_options || {}, this._gemsCharged);
+    this._myPid = this.game._currentPlayerPid();
+    this._pendingUpgrades = args.pending_upgrades || {};
+    this._choices = {};
+    if (Object.keys(this._pendingUpgrades).length > 0) {
+      this._build();
+    }
+    // else: server auto-advances (onEnteringState set this player non-active already)
   }
 
   onLeavingState() {
@@ -561,131 +1037,156 @@ class Upgrade {
   }
 
   _teardown() {
-    document.getElementById("bc-upgrade-ui")?.remove();
+    document.getElementById("btn-bc-upgrade-confirm")?.remove();
+    const el = document.getElementById("bc-upgrade-cards-ui");
+    if (el) {
+      console.log("[UpgradeCards] _teardown — removing bc-upgrade-cards-ui", new Error().stack?.split("\n")[2]?.trim());
+      el.remove();
+    }
   }
 
-  _build(centerCards, upgradeOptions, gemsCharged) {
-    this._choices = {};
-
-    if (centerCards.length === 0) {
-      this.bga.gameArea.getElement().insertAdjacentHTML(
-        "beforeend",
-        `
-        <div id="bc-upgrade-ui">
-          <p>${_("No face-up center cards — nothing to upgrade.")}</p>
-        </div>
-      `,
-      );
-      this.bga.statusBar.setTitle(_("${you} have no cards to upgrade"));
-      this.bga.statusBar.addActionButton(_("Confirm"), () => this._confirm(), { id: "btn-bc-upgrade" });
+  _build() {
+    const entries = Object.entries(this._pendingUpgrades);
+    console.log("[UpgradeCards] _build called", { entryCount: entries.length });
+    // Inject into the player's own board zone, which is visible in the viewport
+    const targetEl = document.querySelector(`.bc-player-board[data-player-id="${this._myPid}"]`) ?? this.bga.gameArea?.getElement?.();
+    console.log("[UpgradeCards] _build targetEl", targetEl?.id || targetEl?.className || "NULL");
+    if (!targetEl) {
+      console.error("[UpgradeCards] _build ABORTED — no target element found");
       return;
     }
-
-    let cardsHtml = "";
-    for (const c of centerCards) {
-      this._choices[c.id] = { action: "produce", chosenId: null };
-      const opts = upgradeOptions[c.id] || [];
-      const optHtml =
-        opts
+    const slotsHtml = entries
+      .map(([cardIdStr, data]) => {
+        const cardId = parseInt(cardIdStr, 10);
+        const options = data.options || [];
+        const optsHtml = options
           .map((o) => {
             const pos = this.game._spritePos(o.type, o.type_arg, o.family);
             return `<div class="bc-card bc-upgrade-option bc-card-sprite bc-card-rank-${o.type}"
-                     id="bc-uopt-${o.id}" data-opt-id="${o.id}" data-card-id="${c.id}"
-                     style="background-position:${pos.x}px ${pos.y}px"></div>`;
+                         id="bc-upgrade-cards-opt-${o.id}"
+                         data-opt-id="${o.id}" data-card-id="${cardId}"
+                         style="background-position:${pos.x}px ${pos.y}px;
+                                opacity:0; transform:translateY(-24px)"></div>`;
           })
-          .join("") || `<em>${_("No options available")}</em>`;
+          .join("");
+        return `<div class="bc-upgrade-cards-slot">
+          <p class="bc-upgrade-cards-label">${_("Choose a replacement card (rank up):")}</p>
+          <div class="bc-upgrade-cards-options">${optsHtml}</div>
+        </div>`;
+      })
+      .join("");
 
-      cardsHtml += `
-        <div class="bc-upgrade-card" id="bc-uchoice-${c.id}" data-card-id="${c.id}">
-          <div class="bc-upgrade-card-info bc-card-rank-${c.type}">
-            Pos ${c.position} — ${this.game._rankName(c.type)} ${this.game._familyName(c.family)} #${c.type_arg}
-          </div>
-          <div class="bc-upgrade-actions">
-            <button class="bc-btn-produce bc-btn-active" id="bc-uprod-${c.id}" data-card-id="${c.id}">
-              ${_("Produce")}
-            </button>
-            <button class="bc-btn-upgrade" id="bc-uupg-${c.id}" data-card-id="${c.id}">
-              ${_("Upgrade (gem)")}
-            </button>
-          </div>
-          <div class="bc-upgrade-options" id="bc-uopts-${c.id}" style="display:none">
-            ${optHtml}
-          </div>
-        </div>
-      `;
-    }
-
-    this.bga.gameArea.getElement().insertAdjacentHTML(
+    targetEl.insertAdjacentHTML(
       "beforeend",
-      `
-      <div id="bc-upgrade-ui">
-        <p>${_("Gems charged")}: <strong>${gemsCharged}</strong> — ${_("choose Production or Upgrade for each center card")}.</p>
-        <div id="bc-upgrade-cards">${cardsHtml}</div>
-      </div>
-    `,
+      `<div id="bc-upgrade-cards-ui">
+        <p>${_("Pick a replacement card for each upgrade:")}</p>
+        ${slotsHtml}
+      </div>`,
     );
+    const uiEl = document.getElementById("bc-upgrade-cards-ui");
+    console.log("[UpgradeCards] _build DOM inserted", { uiElExists: !!uiEl, optionCount: uiEl?.querySelectorAll(".bc-upgrade-option").length });
 
-    document.querySelectorAll(".bc-btn-produce").forEach((btn) => btn.addEventListener("click", (e) => this._selectProduce(e)));
-    document.querySelectorAll(".bc-btn-upgrade").forEach((btn) => btn.addEventListener("click", (e) => this._selectUpgrade(e)));
-    document.querySelectorAll(".bc-upgrade-option").forEach((el) => el.addEventListener("click", (e) => this._selectOption(e)));
+    // Wire click handlers, tooltips, and animate cards in
+    document.querySelectorAll("#bc-upgrade-cards-ui .bc-upgrade-option").forEach((el, i) => {
+      const optId = parseInt(el.dataset.optId, 10);
+      const cardId = parseInt(el.dataset.cardId, 10);
+      const data = this._pendingUpgrades[cardId] || this._pendingUpgrades[String(cardId)];
+      const opt = (data?.options || []).find((o) => parseInt(String(o.id), 10) === optId);
+      if (opt && el.id) this.game.bga.gameui?.addTooltipHtml?.(el.id, this.game._cardTooltipHtml(opt));
+      el.addEventListener("click", () => this._onOptionPick(cardId, optId, el));
+      setTimeout(() => {
+        el.style.transition = "transform 280ms ease-out, opacity 280ms ease-out";
+        el.style.transform = "";
+        el.style.opacity = "";
+      }, i * 100);
+    });
 
-    this.bga.statusBar.setTitle(_("${you} must choose Production or Upgrade for each center card"));
-    this.bga.statusBar.addActionButton(_("Confirm Upgrades"), () => this._confirm(), { id: "btn-bc-upgrade" });
+    this.bga.statusBar.setTitle(_("${you} must pick replacement cards for your upgrades"));
+
+    // Check visibility after animations complete
+    setTimeout(() => {
+      const ui = document.getElementById("bc-upgrade-cards-ui");
+      const rect = ui?.getBoundingClientRect();
+      const firstOpt = ui?.querySelector(".bc-upgrade-option");
+      const cs = firstOpt ? window.getComputedStyle(firstOpt) : null;
+      console.log("[UpgradeCards] post-animation check", {
+        uiStillInDOM: !!ui,
+        inViewport: rect ? rect.bottom > 0 && rect.top < window.innerHeight : false,
+        uiTop: rect ? Math.round(rect.top) : null,
+        uiHeight: rect ? Math.round(rect.height) : null,
+        firstOptOpacity: cs?.opacity,
+        firstOptDisplay: cs?.display,
+        firstOptVisibility: cs?.visibility,
+      });
+    }, 600);
   }
 
-  _selectProduce(e) {
-    const cardId = parseInt(e.currentTarget.dataset.cardId, 10);
-    this._choices[cardId] = { action: "produce", chosenId: null };
-    document.getElementById(`bc-uopts-${cardId}`)?.style.setProperty("display", "none");
-    document.getElementById(`bc-uprod-${cardId}`)?.classList.add("bc-btn-active");
-    document.getElementById(`bc-uupg-${cardId}`)?.classList.remove("bc-btn-active");
-    document.querySelectorAll(`#bc-uopts-${cardId} .bc-upgrade-option`).forEach((el) => el.classList.remove("bc-option-selected"));
-  }
-
-  _selectUpgrade(e) {
-    const cardId = parseInt(e.currentTarget.dataset.cardId, 10);
-    this._choices[cardId] = { action: "upgrade", chosenId: null };
-    document.getElementById(`bc-uopts-${cardId}`)?.style.setProperty("display", "flex");
-    document.getElementById(`bc-uprod-${cardId}`)?.classList.remove("bc-btn-active");
-    document.getElementById(`bc-uupg-${cardId}`)?.classList.add("bc-btn-active");
-  }
-
-  _selectOption(e) {
-    const optId = parseInt(e.currentTarget.dataset.optId, 10);
-    const cardId = parseInt(e.currentTarget.dataset.cardId, 10);
-    this._choices[cardId] = { action: "upgrade", chosenId: optId };
-    document.querySelectorAll(`#bc-uopts-${cardId} .bc-upgrade-option`).forEach((el) => el.classList.toggle("bc-option-selected", parseInt(el.dataset.optId, 10) === optId));
-  }
-
-  _confirm() {
-    const produceCardIds = [];
-    const upgradeCardIds = [];
-    const chosenOptionIds = [];
-
-    for (const [cardIdStr, choice] of Object.entries(this._choices)) {
-      const cardId = parseInt(cardIdStr, 10);
-      if (choice.action === "produce") {
-        produceCardIds.push(cardId);
-      } else {
-        if (choice.chosenId === null) {
-          this.bga.statusBar.setTitle(_("Please select a replacement card for each upgrade"));
-          return;
-        }
-        upgradeCardIds.push(cardId);
-        chosenOptionIds.push(choice.chosenId);
-      }
-    }
-
-    if (upgradeCardIds.length > this._gemsCharged) {
-      this.bga.statusBar.setTitle(_("Not enough charged gems for this many upgrades"));
+  _onOptionPick(cardId, optId, el) {
+    // Toggle deselect
+    if (this._choices[cardId] === optId) {
+      delete this._choices[cardId];
+      el.classList.remove("bc-option-selected");
+      this._updateConfirmButton();
       return;
     }
 
-    this.bga.actions.performAction("actConfirmUpgrades", {
-      produceCardIds,
-      upgradeCardIds,
-      chosenOptionIds,
+    // Deselect others in same slot, then select this one
+    const slot = el.closest(".bc-upgrade-cards-slot");
+    slot?.querySelectorAll(".bc-upgrade-option").forEach((e) => e.classList.remove("bc-option-selected"));
+    el.classList.add("bc-option-selected");
+    this._choices[cardId] = optId;
+    this._updateConfirmButton();
+  }
+
+  _updateConfirmButton() {
+    const allPicked = Object.keys(this._pendingUpgrades).every((cid) => {
+      const key = parseInt(cid, 10);
+      return this._choices[key] !== undefined;
     });
+    if (allPicked) {
+      if (!document.getElementById("btn-bc-upgrade-confirm")) {
+        this.bga.statusBar.addActionButton(_("Confirm replacement"), () => this._confirm(), { id: "btn-bc-upgrade-confirm" });
+      }
+    } else {
+      document.getElementById("btn-bc-upgrade-confirm")?.remove();
+    }
+  }
+
+  async _confirm() {
+    document.getElementById("btn-bc-upgrade-confirm")?.remove();
+    document.querySelectorAll("#bc-upgrade-cards-ui .bc-upgrade-option").forEach((e) => {
+      e.style.pointerEvents = "none";
+    });
+
+    const cardIds = [];
+    const chosenIds = [];
+    const animPromises = [];
+    for (const [cardIdStr, chosenId] of Object.entries(this._choices)) {
+      const cardId = parseInt(cardIdStr, 10);
+      cardIds.push(cardId);
+      chosenIds.push(chosenId);
+
+      // Animate chosen option card sliding to its grid slot
+      const optEl = document.getElementById(`bc-upgrade-cards-opt-${chosenId}`);
+      const data = this._pendingUpgrades[cardId] ?? this._pendingUpgrades[String(cardId)];
+      if (optEl && data?.position !== undefined) {
+        const gridStock = this.game._gridStocks[this._myPid];
+        const slotEl = gridStock?.getElement?.()?.querySelector(`[data-slot-id="${data.position}"]`);
+        if (slotEl) {
+          const from = optEl.getBoundingClientRect();
+          const to = slotEl.getBoundingClientRect();
+          const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+          const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+          optEl.style.transition = "transform 380ms ease-in, opacity 380ms ease-in";
+          optEl.style.transform = `translate(${dx}px, ${dy}px) scale(0.85)`;
+          optEl.style.opacity = "0";
+          animPromises.push(new Promise((r) => setTimeout(r, 420)));
+        }
+      }
+    }
+
+    await Promise.all(animPromises.length ? animPromises : [new Promise((r) => setTimeout(r, 200))]);
+    this.bga.actions.performAction("actPickUpgrades", { cardIds, chosenIds });
   }
 }
 
@@ -700,9 +1201,14 @@ export class Game {
     this.silverDraft = new SilverDraft(this, bga);
     this.deploy = new Deploy(this, bga);
     this.upgrade = new Upgrade(this, bga);
+    this.upgradeMain = new UpgradeMainState(this, bga);
+    this.upgradePickReplacement = new UpgradePickReplacementState(this, bga);
+    this.upgradeCards = new UpgradeCardsState(this, bga); // legacy stub
     this.bga.states.register("SilverDraft", this.silverDraft);
     this.bga.states.register("Deploy", this.deploy);
     this.bga.states.register("Upgrade", this.upgrade);
+    this.bga.states.register("UpgradeMain", this.upgradeMain);
+    this.bga.states.register("UpgradePickReplacement", this.upgradePickReplacement);
   }
 
   setup(gamedatas) {
@@ -731,8 +1237,14 @@ export class Game {
         element.style.backgroundPosition = `${pos.x}px ${pos.y}px`;
       },
       setupBackDiv: (card, element) => {
-        element.classList.add("bc-card-hidden");
-        element.textContent = "▪";
+        const family = parseInt(card.family, 10);
+        if (family >= 1 && family <= 3) {
+          element.classList.add("bc-card-sprite");
+          element.style.backgroundPosition = `${-(11 * 167)}px ${-((family - 1) * 119)}px`;
+        } else {
+          element.classList.add("bc-card-hidden");
+          element.textContent = "▪";
+        }
       },
       cardWidth: 167,
       cardHeight: 119,
@@ -794,14 +1306,29 @@ export class Game {
               <div class="bc-flank-label">← ${prevName}</div>
               ${leftFlankHtml}
             </div>
-            <div class="bc-grid" id="bc-grid-${pidStr}"></div>
+            <div class="bc-grid-container">
+              <div class="bc-col-header">
+                <div class="bc-col-h"></div>
+                <div class="bc-col-h"></div>
+                <div class="bc-col-h bc-col-fp-marker" id="bc-col-fp-${pidStr}" style="visibility:hidden">⬤</div>
+              </div>
+              <div class="bc-grid" id="bc-grid-${pidStr}"></div>
+            </div>
             <div class="bc-flank-col">
               <div class="bc-flank-label">${nextName} →</div>
               ${rightFlankHtml}
             </div>
           </div>`;
       } else {
-        gridHtml = `<div class="bc-grid" id="bc-grid-${pidStr}"></div>`;
+        gridHtml = `
+          <div class="bc-grid-container">
+            <div class="bc-col-header">
+              <div class="bc-col-h"></div>
+              <div class="bc-col-h"></div>
+              <div class="bc-col-h bc-col-fp-marker" id="bc-col-fp-${pidStr}" style="visibility:hidden">⬤</div>
+            </div>
+            <div class="bc-grid" id="bc-grid-${pidStr}"></div>
+          </div>`;
       }
 
       playersArea.insertAdjacentHTML(
@@ -813,12 +1340,19 @@ export class Game {
             <span class="bc-first-player-marker" id="bc-fp-${pidStr}" style="display:none">★</span>
           </div>
           ${gridHtml}
-          <div class="bc-hand-area" id="bc-hand-area-${pidStr}"></div>
-          <div class="bc-player-info">
-            <span id="bc-gems-${pidStr}">
-              💎 <span id="bc-gems-charged-${pidStr}">?</span>↑
-              / <span id="bc-gems-uncharged-${pidStr}">?</span>↓
-            </span>
+          <div class="bc-components-row">
+            <div class="bc-gems-zone" id="bc-gems-zone-${pidStr}">
+              <div class="bc-gem" data-state="charged"></div>
+              <div class="bc-gem" data-state="uncharged"></div>
+              <div class="bc-gem" data-state="uncharged"></div>
+            </div>
+            <div class="bc-class-components" id="bc-class-components-${pidStr}">
+              <div class="bc-rage-marker" id="bc-rage-${pidStr}" data-rage="calm"></div>
+              <div class="bc-dice-area" id="bc-dice-area-${pidStr}"></div>
+            </div>
+          </div>
+          <div class="bc-hand-row">
+            <div class="bc-hand-area" id="bc-hand-area-${pidStr}"></div>
           </div>
         </div>
       `,
@@ -851,7 +1385,7 @@ export class Game {
         const assignSlotIds = () => {
           let count = 0;
           for (let pos = 0; pos < 9; pos++) {
-            const slotEl = gridEl.querySelector(`.slot-${pos}`);
+            const slotEl = gridEl.querySelector(`[data-slot-id="${pos}"]`);
             if (slotEl) {
               slotEl.id = `bc-cell-${pidStr}-${pos}`;
               count++;
@@ -868,9 +1402,12 @@ export class Game {
       }
     }
 
-    // Show first-player marker
-    const fpEl = document.getElementById(`bc-fp-${playerOrder[0]}`);
+    // Show first-player marker (turn_order_start_id is the actual first player)
+    const firstPid = String(gamedatas.turn_order_start_id || rawOrder[0]);
+    const fpEl = document.getElementById(`bc-fp-${firstPid}`);
     if (fpEl) fpEl.style.removeProperty("display");
+    const firstColEl = document.getElementById(`bc-col-fp-${firstPid}`);
+    if (firstColEl) firstColEl.style.removeProperty("visibility");
 
     // Solo mode: bot cards fill the flank columns
     if (gamedatas.is_solo) {
@@ -900,14 +1437,29 @@ export class Game {
       };
       this._gridStocks[pidStr]?.addCard(cardObj);
       this._updateFlankMirror(pidStr, pos, card);
+      if (cardObj.type) {
+        const snap = { ...cardObj };
+        setTimeout(() => {
+          const el = this.cardManager.getCardElement(snap);
+          if (el?.id) this.bga.gameui?.addTooltipHtml?.(el.id, this._cardTooltipHtml(snap));
+        }, 0);
+      }
     }
 
-    // Initial gem values
+    // Initial gem + rage values
     for (const [pidStr, player] of Object.entries(gamedatas.players)) {
-      const el1 = document.getElementById(`bc-gems-charged-${pidStr}`);
-      if (el1) el1.textContent = player.gems_charged ?? "?";
-      const el2 = document.getElementById(`bc-gems-uncharged-${pidStr}`);
-      if (el2) el2.textContent = player.gems_uncharged ?? "?";
+      const rageEl = document.getElementById(`bc-rage-${pidStr}`);
+      if (rageEl) rageEl.dataset.rage = parseInt(player.rage, 10) === 1 ? "enraged" : "calm";
+      const gemsZone = document.getElementById(`bc-gems-zone-${pidStr}`);
+      if (gemsZone) {
+        gemsZone.dataset.gemCol = String(this._colorToGemCol(player.color || ""));
+        this._updateGemDisplay(pidStr, parseInt(player.gems_charged, 10) || 0);
+      }
+    }
+
+    // Restore token visuals from page-load snapshot
+    for (const token of gamedatas.tokens || []) {
+      this._placeToken(String(token.player_id), parseInt(String(token.grid_position), 10), token.token_type, parseInt(String(token.value), 10));
     }
 
     // Shared deck counters
@@ -1037,10 +1589,293 @@ export class Game {
     return { x: -(col * 167), y: -(row * 119) };
   }
 
+  _cardForce(type, typeArg) {
+    const F = {
+      "1:1": 2,
+      "1:2": 2,
+      "1:3": 1,
+      "1:4": 3,
+      "1:5": 2,
+      "1:6": 1,
+      "2:1": 3,
+      "2:2": 2,
+      "2:3": 3,
+      "2:4": 0,
+      "2:5": 3,
+      "2:6": 1,
+      "2:7": 2,
+      "2:8": 3,
+      "2:9": 2,
+      "2:10": 3,
+      "2:11": 3,
+      "2:12": 3,
+      "2:13": 4,
+      "2:14": 2,
+      "2:15": 3,
+      "2:16": 3,
+      "2:17": 4,
+      "2:18": 4,
+      "3:1": 4,
+      "3:2": 2,
+      "3:3": 6,
+      "3:4": 4,
+      "3:5": 5,
+      "3:6": 2,
+      "3:7": 0,
+      "3:8": 0,
+      "3:9": 2,
+    };
+    return F[`${type}:${typeArg}`] ?? 0;
+  }
+
+  _cardTraits(type, typeArg) {
+    const T = {
+      "1:1": ["gambler", "arcane"],
+      "1:2": ["gambler", "mastery"],
+      "1:3": ["brute", "impact"],
+      "1:4": ["brute", "mastery"],
+      "1:5": ["pirate", "energy"],
+      "1:6": ["pirate", "arcane"],
+      "2:1": ["gambler", "arcane"],
+      "2:2": ["gambler", "impact"],
+      "2:3": ["gambler", "arcane"],
+      "2:4": ["gambler", "impact"],
+      "2:5": ["gambler", "mastery"],
+      "2:6": ["gambler", "impact"],
+      "2:7": ["brute", "impact"],
+      "2:8": ["brute", "impact"],
+      "2:9": ["brute", "impact"],
+      "2:10": ["brute", "impact"],
+      "2:11": ["brute", "mastery"],
+      "2:12": ["brute", "impact"],
+      "2:13": ["pirate", "mastery"],
+      "2:14": ["pirate", "impact"],
+      "2:15": ["pirate", "impact"],
+      "2:16": ["pirate", "mastery"],
+      "2:17": ["pirate", "impact"],
+      "2:18": ["pirate", "arcane"],
+      "3:1": ["gambler", "arcane"],
+      "3:2": ["gambler", "mastery"],
+      "3:3": ["gambler", "impact"],
+      "3:4": ["brute", "mastery"],
+      "3:5": ["brute", "impact"],
+      "3:6": ["brute", "impact"],
+      "3:7": ["pirate", "impact"],
+      "3:8": ["pirate", "mastery"],
+      "3:9": ["pirate", "impact"],
+    };
+    return T[`${type}:${typeArg}`] ?? [];
+  }
+
+  _cardTooltipHtml(card) {
+    const t = parseInt(card.type, 10);
+    const a = parseInt(card.type_arg, 10);
+    const f = parseInt(card.family, 10);
+    const pos = this._spritePos(t, a, f);
+    const traits = this._cardTraits(t, a).join(" · ");
+    const effect = this._influenceEffectDesc(`${t}:${a}`, null);
+    return `<div style="display:flex;gap:8px;padding:4px;max-width:520px">` + `<div class="bc-card bc-card-sprite bc-card-rank-${t}" ` + `style="width:344px;height:238px;background-size:4008px 714px;background-position:${pos.x * 2}px ${pos.y * 2}px;flex-shrink:0"></div>` + `<div><strong>${this._cardName(t, a)}</strong><br>` + `${this._rankName(t)} · ${this._familyName(f)} · ⚔ ${this._cardForce(t, a)}<br>` + `<em>${traits}</em><br>` + `<small>${effect}</small></div>` + `</div>`;
+  }
+
+  _tokenTooltipHtml(tokenType, value) {
+    if (tokenType === "gambler") {
+      const sign = value >= 0 ? "+" : "";
+      return `<strong>${sign}${value} force</strong>`;
+    }
+    return `<strong>Gold rank</strong> (Pirate Gold token)`;
+  }
+
+  // Map BGA player color (hex string, e.g. "ff0000") to gem sprite column (0–3).
+  _colorToGemCol(hex) {
+    const r = parseInt(hex.slice(0, 2), 16) || 0;
+    const g = parseInt(hex.slice(2, 4), 16) || 0;
+    const b = parseInt(hex.slice(4, 6), 16) || 0;
+    if (r > g && r > b) return 0; // red
+    if (g > r && g > b) return 1; // green
+    if (b > r && b > g) return 2; // blue
+    return 3; // yellow / orange / other
+  }
+
+  // Update the 3 gem icons for a player. Pass animate=true to flip the changing gem.
+  async _updateGemDisplay(pid, charged, animate = false) {
+    const zone = document.getElementById(`bc-gems-zone-${pid}`);
+    if (!zone) return;
+    const gems = [...zone.querySelectorAll(".bc-gem")];
+
+    if (!animate) {
+      gems.forEach((gem, i) => {
+        gem.dataset.state = i < charged ? "charged" : "uncharged";
+      });
+      return;
+    }
+
+    // Identify the gem that changes state
+    const currentCharged = gems.filter((g) => g.dataset.state === "charged").length;
+    const newState = charged > currentCharged ? "charged" : "uncharged";
+    const changingIdx = charged < currentCharged ? charged : currentCharged;
+    const changingGem = gems[changingIdx];
+
+    if (!changingGem) {
+      gems.forEach((gem, i) => {
+        gem.dataset.state = i < charged ? "charged" : "uncharged";
+      });
+      return;
+    }
+
+    // Flip: rotate to edge → swap face → rotate back
+    changingGem.style.transition = "transform 150ms ease-in";
+    changingGem.style.transform = "rotateY(90deg)";
+    await new Promise((r) => setTimeout(r, 160));
+    changingGem.dataset.state = newState;
+    changingGem.style.transition = "transform 150ms ease-out";
+    changingGem.style.transform = "rotateY(0deg)";
+    await new Promise((r) => setTimeout(r, 160));
+    changingGem.style.transition = "";
+    changingGem.style.transform = "";
+  }
+
+  // Animate a dice roll on a cell: rapidly cycles faces then lands on finalValue.
+  async _animateDice(cell, finalValue) {
+    const die = document.createElement("div");
+    die.className = "bc-dice-anim";
+    cell.appendChild(die);
+    const frames = 8;
+    for (let i = 0; i < frames; i++) {
+      const face = i === frames - 1 ? finalValue : Math.floor(Math.random() * 6) + 1;
+      die.style.backgroundPositionX = `${-(face - 1) * 60}px`;
+      await new Promise((r) => setTimeout(r, i < frames - 2 ? 80 : 150));
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    die.remove();
+  }
+
+  // Returns background-position for a gambler token sprite based on its value.
+  // Sprite cols (0-indexed): 6=±1, 7=±4, 8=±3, 9=±8. Row 0=green (+), row 1=red (−).
+  _gamblerTokenSprite(value) {
+    const abs = Math.abs(value);
+    let colIdx;
+    if (abs <= 2) colIdx = 6;
+    else if (abs === 3) colIdx = 8;
+    else if (abs === 4) colIdx = 7;
+    else colIdx = 9;
+    const row = value >= 0 ? 0 : 1;
+    return { x: -(colIdx * 60), y: -(row * 60) };
+  }
+
+  // Place a token visual on a grid cell (appended inside the cell div, no animation).
+  _placeToken(pidStr, gridPos, tokenType, value) {
+    const cell = document.getElementById(`bc-cell-${pidStr}-${gridPos}`);
+    if (!cell) return;
+    const tokenCount = cell.querySelectorAll(".bc-token").length;
+    const div = document.createElement("div");
+    div.className = "bc-token";
+    div.id = `bc-token-${pidStr}-${gridPos}-${tokenCount}`;
+    div.dataset.tokenType = tokenType;
+    div.dataset.gridPos = String(gridPos);
+    div.dataset.tokenValue = String(value);
+    div.style.top = `${3 + tokenCount * 40}px`;
+    div.style.right = "3px";
+    if (tokenType === "gambler") {
+      const s = this._gamblerTokenSprite(parseInt(value, 10));
+      div.style.backgroundPosition = `${s.x}px ${s.y}px`;
+    } else {
+      div.style.backgroundPosition = `${-(11 * 60)}px 0`; // pirate_gold: col 12
+    }
+    cell.appendChild(div);
+    this.bga.gameui?.addTooltipHtml?.(div.id, this._tokenTooltipHtml(tokenType, value));
+    const flankCell = this._getFlankCell(pidStr, gridPos);
+    if (flankCell) {
+      const flankCount = flankCell.querySelectorAll(".bc-token").length;
+      const flankDiv = div.cloneNode(true);
+      flankDiv.id = "";
+      flankDiv.style.top = `${3 + flankCount * 40}px`;
+      flankCell.appendChild(flankDiv);
+    }
+  }
+
+  // Place a token visual with a slide-in animation from the top of the screen.
+  async _placeTokenAnimated(pidStr, gridPos, tokenType, value) {
+    const cell = document.getElementById(`bc-cell-${pidStr}-${gridPos}`);
+    if (!cell) {
+      this._placeToken(pidStr, gridPos, tokenType, value);
+      return;
+    }
+    const tokenCount = cell.querySelectorAll(".bc-token").length;
+    const bgPos =
+      tokenType === "gambler"
+        ? (() => {
+            const s = this._gamblerTokenSprite(parseInt(value, 10));
+            return `${s.x}px ${s.y}px`;
+          })()
+        : `${-(11 * 60)}px 0`;
+
+    const cellRect = cell.getBoundingClientRect();
+    const topOffset = 3 + tokenCount * 40;
+    const finalLeft = cellRect.right - 60 - 3;
+    const finalTop = cellRect.top + topOffset;
+
+    const ghost = document.createElement("div");
+    ghost.className = "bc-token";
+    ghost.style.backgroundPosition = bgPos;
+    ghost.style.position = "fixed";
+    ghost.style.left = `${finalLeft}px`;
+    ghost.style.top = `-70px`;
+    ghost.style.zIndex = "1000";
+    ghost.style.transition = "top 0.35s ease-out";
+    document.body.appendChild(ghost);
+    void ghost.offsetHeight;
+    ghost.style.top = `${finalTop}px`;
+    await new Promise((r) => setTimeout(r, 370));
+    ghost.remove();
+
+    const div = document.createElement("div");
+    div.className = "bc-token";
+    div.id = `bc-token-${pidStr}-${gridPos}-${tokenCount}`;
+    div.dataset.tokenType = tokenType;
+    div.dataset.gridPos = String(gridPos);
+    div.dataset.tokenValue = String(value);
+    div.style.backgroundPosition = bgPos;
+    div.style.top = `${topOffset}px`;
+    div.style.right = "3px";
+    cell.appendChild(div);
+    this.bga.gameui?.addTooltipHtml?.(div.id, this._tokenTooltipHtml(tokenType, value));
+    const flankCell = this._getFlankCell(pidStr, gridPos);
+    if (flankCell) {
+      const flankCount = flankCell.querySelectorAll(".bc-token").length;
+      const flankDiv = div.cloneNode(true);
+      flankDiv.id = "";
+      flankDiv.style.top = `${3 + flankCount * 40}px`;
+      flankCell.appendChild(flankDiv);
+    }
+  }
+
+  // Animate a token element sliding up and fading out, then remove it.
+  async _animateTokenRemove(el) {
+    el.style.transition = "transform 0.3s ease-in, opacity 0.3s ease-in";
+    el.style.transform = "translateY(-80px)";
+    el.style.opacity = "0";
+    await new Promise((r) => setTimeout(r, 320));
+    el.remove();
+  }
+
+  // Remove all token elements from a player's grid cells and their flank mirrors.
+  _clearPlayerTokens(pidStr) {
+    for (let pos = 0; pos < 9; pos++) {
+      const cell = document.getElementById(`bc-cell-${pidStr}-${pos}`);
+      if (cell) cell.querySelectorAll(".bc-token").forEach((el) => el.remove());
+      const flankCell = this._getFlankCell(pidStr, pos);
+      if (flankCell) flankCell.querySelectorAll(".bc-token").forEach((el) => el.remove());
+    }
+  }
+
   // Flat card HTML for flank mirror cells and deck pile (no CardManager tracking).
   // Face-down: standalone div needs explicit flex centering (no inner .card-side).
   _cardHtml(card) {
     if (!card || !card.type) {
+      const family = parseInt(card?.family, 10);
+      if (family >= 1 && family <= 3) {
+        return `<div class="bc-card bc-card-sprite" style="background-position:${-(11 * 167)}px ${-((family - 1) * 119)}px"></div>`;
+      }
       return `<div class="bc-card bc-card-hidden">▪</div>`;
     }
     const pos = this._spritePos(card.type, card.type_arg, card.family);
@@ -1061,6 +1896,20 @@ export class Game {
       const flank = document.getElementById(`bc-flank-right-${row}`);
       if (flank) flank.innerHTML = this._cardHtml(card);
     }
+  }
+
+  // Returns the flank cell mirroring the given opponent's border position, or null.
+  // col 2 of prevOpp → flank-left; col 0 of nextOpp → flank-right.
+  _getFlankCell(pidStr, pos) {
+    const col = pos % 3;
+    const row = Math.floor(pos / 3);
+    if (pidStr === this._prevOppPid && col === 2) {
+      return document.getElementById(`bc-flank-left-${row}`);
+    }
+    if (pidStr === this._nextOppPid && col === 0) {
+      return document.getElementById(`bc-flank-right-${row}`);
+    }
+    return null;
   }
 
   _placeBotCard(side, row, card) {
@@ -1084,30 +1933,34 @@ export class Game {
       if (existing) {
         this.cardManager.setCardVisible(existing, false);
       } else {
-        await gridStock?.addCard({ id: c.id, type: null, position: pos });
+        await gridStock?.addCard({ id: c.id, type: null, family: c.family || null, position: pos });
       }
+      this._updateFlankMirror(pid, pos, c);
     }
   }
 
   // Gem count changed (mulligan, produce, upgrade)
   async notif_gemUpdated(args) {
-    const pid = String(args.player_id);
-    const el1 = document.getElementById(`bc-gems-charged-${pid}`);
-    if (el1) el1.textContent = args.charged;
-    const el2 = document.getElementById(`bc-gems-uncharged-${pid}`);
-    if (el2) el2.textContent = args.uncharged;
+    await this._updateGemDisplay(String(args.player_id), args.charged, true);
   }
 
-  // Current-row cards flipped face-up — 3D card flip via bga-cards setCardVisible
+  // Current-row cards flipped face-up — 3D card flip via bga-cards setCardVisible.
+  // No wobble here: each card wobbles individually when its notify fires (influence / combat).
   async notif_cardsRevealed(args) {
     const pid = String(args.player_id);
     for (const c of args.cards || []) {
       const pos = parseInt(c.position, 10);
       const cardObj = { id: c.id, type: c.type, type_arg: c.type_arg, family: c.family, position: pos };
-      this.cardManager.setCardVisible(cardObj, true); // void — CSS flip, updates front face
+      this.cardManager.setCardVisible(cardObj, true);
       this._updateFlankMirror(pid, pos, c);
+      if (c.type) {
+        const cardEl = this.cardManager.getCardElement({ id: c.id });
+        if (cardEl?.id) this.bga.gameui?.addTooltipHtml?.(cardEl.id, this._cardTooltipHtml(c));
+      }
     }
-    if (args.cards?.length > 0) await new Promise((r) => setTimeout(r, 550));
+    if (args.cards?.length > 0) {
+      await new Promise((r) => setTimeout(r, 550));
+    }
   }
 
   // Center card effect applied during Influence phase
@@ -1117,28 +1970,97 @@ export class Game {
     const centerCell = document.getElementById(`bc-cell-${pid}-${centerPos}`);
     if (!centerCell) return;
 
+    // Wobble the center card + rage flip in parallel
+    const cardEl = centerCell.querySelector(".bc-card");
+    if (cardEl) {
+      cardEl.classList.add("bc-card-activating");
+      setTimeout(() => cardEl.classList.remove("bc-card-activating"), 350);
+    }
+    if (args.rage_toggle !== null && args.rage_toggle !== undefined) {
+      this._animateRage(pid, args.rage_toggle);
+    }
+
+    if (args.dice_roll > 0) {
+      await this._animateDice(centerCell, args.dice_roll);
+    }
+
     const [rankStr, designStr] = (args.effect_type || "").split(":");
     const name = this._cardName(rankStr, designStr);
-    const desc = this._influenceEffectDesc(args.effect_type, args.dice_roll);
+    const desc = args.effect_desc && args.effect_desc !== "—" ? args.effect_desc : this._influenceEffectDesc(args.effect_type, args.dice_roll);
 
+    this.bga.statusBar.setTitle(`${name} — ${desc}`);
     const badge = document.createElement("div");
     badge.className = "bc-effect-badge";
     badge.innerHTML = `<strong>${name}</strong><br>${desc}`;
     centerCell.appendChild(badge);
 
-    await new Promise((r) => setTimeout(r, 2200));
+    await new Promise((r) => setTimeout(r, 3000));
     badge.remove();
-
-    console.log(`[bc] Influence — Player ${pid}: ${name} (${desc})`);
   }
 
-  // One combat result — show strength popups on border cards, fade the loser
+  // Combat start announced — pause before first effect badge
+  async notif_combatStarted(_args) {
+    this.bga.statusBar.setTitle(_("⚔ Combat!"));
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+
+  // One side's combat effect — brief badge on the card cell (and its flank mirror)
+  async notif_combatEffectApplied(args) {
+    let cell;
+    let flankCell = null;
+    if (args.solo_combat) {
+      const flankSide = args.bot_side === "right" ? "left" : "right";
+      cell = document.getElementById(`bc-flank-${flankSide}-${args.bot_row}`);
+    } else {
+      const pid = String(args.player_id);
+      const pos = parseInt(String(args.position), 10);
+      cell = document.getElementById(`bc-cell-${pid}-${pos}`);
+      flankCell = this._getFlankCell(pid, pos);
+    }
+    if (!cell) return;
+    const text = args.effect_desc === "—" ? `⚔ ${args.final_strength}` : `${args.effect_desc} → ⚔ ${args.final_strength}`;
+    this.bga.statusBar.setTitle(text);
+    const badge = document.createElement("div");
+    badge.className = "bc-effect-badge";
+    badge.textContent = text;
+    cell.appendChild(badge);
+
+    const cardEl = cell.querySelector(".bc-card");
+    if (cardEl) {
+      cardEl.classList.add("bc-card-activating");
+      setTimeout(() => cardEl.classList.remove("bc-card-activating"), 350);
+    }
+    if (args.rage_toggle !== null && args.rage_toggle !== undefined && !args.solo_combat) {
+      this._animateRage(String(args.player_id), args.rage_toggle);
+    }
+
+    let flankBadge = null;
+    if (flankCell) {
+      flankBadge = document.createElement("div");
+      flankBadge.className = "bc-effect-badge";
+      flankBadge.textContent = text;
+      flankCell.appendChild(flankBadge);
+      const flankCardEl = flankCell.querySelector(".bc-card");
+      if (flankCardEl) {
+        flankCardEl.classList.add("bc-card-activating");
+        setTimeout(() => flankCardEl.classList.remove("bc-card-activating"), 350);
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 3000));
+    badge.remove();
+    flankBadge?.remove();
+  }
+
+  // One combat result — show strength popups on border cards (and flank mirrors), fade the loser
   async notif_combatResolved(args) {
     const rightPid = String(args.right_player_id);
     const lStr = args.left_strength ?? 0;
     const rStr = args.right_strength ?? 0;
 
     let leftCardEl, rightCardEl;
+    let leftFlankCardEl = null,
+      rightFlankCardEl = null;
 
     if (args.solo_combat) {
       const botFlankSide = args.bot_side === "right" ? "left" : "right";
@@ -1152,6 +2074,8 @@ export class Game {
       const rightPos = parseInt(args.right_position, 10);
       leftCardEl = document.getElementById(`bc-cell-${leftPid}-${leftPos}`)?.firstElementChild ?? null;
       rightCardEl = document.getElementById(`bc-cell-${rightPid}-${rightPos}`)?.firstElementChild ?? null;
+      leftFlankCardEl = this._getFlankCell(leftPid, leftPos)?.firstElementChild ?? null;
+      rightFlankCardEl = this._getFlankCell(rightPid, rightPos)?.firstElementChild ?? null;
     }
 
     const addStrBadge = (cardEl, strength, won) => {
@@ -1167,47 +2091,158 @@ export class Game {
     const leftWon = !tie && lStr > rStr;
     const rightWon = !tie && rStr > lStr;
 
+    const resultTitle = tie ? `⚔ ${_("Tie")} (${lStr} vs ${rStr})` : leftWon ? `⚔ ${lStr} > ${rStr}` : `⚔ ${rStr} > ${lStr}`;
+    this.bga.statusBar.setTitle(resultTitle);
+
     const lBadge = addStrBadge(leftCardEl, lStr, tie ? null : leftWon);
     const rBadge = addStrBadge(rightCardEl, rStr, tie ? null : rightWon);
+    const lFlankBadge = addStrBadge(leftFlankCardEl, lStr, tie ? null : leftWon);
+    const rFlankBadge = addStrBadge(rightFlankCardEl, rStr, tie ? null : rightWon);
+
+    const scoreColor = (won) => (won === null ? "#f39c12" : won ? "#27ae60" : "#c0392b");
+    if (leftCardEl) this.bga.gameui?.displayScoring?.(leftCardEl, scoreColor(tie ? null : leftWon), lStr);
+    if (rightCardEl) this.bga.gameui?.displayScoring?.(rightCardEl, scoreColor(tie ? null : rightWon), rStr);
+    if (leftFlankCardEl) this.bga.gameui?.displayScoring?.(leftFlankCardEl, scoreColor(tie ? null : leftWon), lStr);
+    if (rightFlankCardEl) this.bga.gameui?.displayScoring?.(rightFlankCardEl, scoreColor(tie ? null : rightWon), rStr);
 
     if (!tie) {
       if (rightWon && leftCardEl) leftCardEl.classList.add("bc-card-loser");
       if (leftWon && rightCardEl) rightCardEl.classList.add("bc-card-loser");
+      if (rightWon && leftFlankCardEl) leftFlankCardEl.classList.add("bc-card-loser");
+      if (leftWon && rightFlankCardEl) rightFlankCardEl.classList.add("bc-card-loser");
     }
 
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 3000));
 
     lBadge?.remove();
     rBadge?.remove();
+    lFlankBadge?.remove();
+    rFlankBadge?.remove();
     leftCardEl?.classList.remove("bc-card-loser");
     rightCardEl?.classList.remove("bc-card-loser");
+    leftFlankCardEl?.classList.remove("bc-card-loser");
+    rightFlankCardEl?.classList.remove("bc-card-loser");
   }
 
   async notif_rageUpdated(args) {
-    console.log(`[bc] Rage — Player ${args.player_id}: ${args.rage === 1 ? "Enraged" : "Calm"}`);
-    // TODO Phase 7b: update rage marker icon in player board
+    this._animateRage(args.player_id, args.rage);
+    // Fire-and-forget — don't await so notification queue is not blocked
+  }
+
+  _animateRage(playerId, rage) {
+    const el = document.getElementById(`bc-rage-${playerId}`);
+    if (!el) return;
+    el.style.transition = "transform 150ms ease-in";
+    el.style.transform = "perspective(200px) rotateY(90deg)";
+    setTimeout(() => {
+      el.dataset.rage = rage === 1 ? "enraged" : "calm";
+      el.style.transition = "transform 150ms ease-out";
+      el.style.transform = "perspective(200px) rotateY(0deg)";
+      setTimeout(() => {
+        el.style.transition = "";
+        el.style.transform = "";
+      }, 160);
+    }, 160);
   }
 
   async notif_tokenAdded(args) {
-    console.log(`[bc] Token — Player ${args.player_id} pos ${args.grid_position}: ${args.token_type} val=${args.value}`);
-    // TODO Phase 7b: show token element on grid cell
+    await this._placeTokenAnimated(String(args.player_id), parseInt(String(args.grid_position), 10), args.token_type, parseInt(String(args.value), 10));
+  }
+
+  async notif_tokensSyncPlayer(args) {
+    const pid = String(args.player_id);
+    const makeKey = (pos, type, value) => `${pos}:${type}:${value}`;
+
+    // Collect current token elements for this player
+    const currentPool = [];
+    for (let pos = 0; pos < 9; pos++) {
+      const cell = document.getElementById(`bc-cell-${pid}-${pos}`);
+      if (!cell) continue;
+      cell.querySelectorAll(".bc-token").forEach((el) => {
+        currentPool.push({
+          el,
+          key: makeKey(parseInt(el.dataset.gridPos, 10), el.dataset.tokenType, parseInt(el.dataset.tokenValue || "0", 10)),
+        });
+      });
+    }
+
+    // Build incoming token list
+    const newPool = (args.tokens || []).map((t) => ({
+      pos: parseInt(String(t.grid_position), 10),
+      type: t.token_type,
+      value: parseInt(String(t.value), 10),
+      key: makeKey(parseInt(String(t.grid_position), 10), t.token_type, parseInt(String(t.value), 10)),
+      used: false,
+    }));
+
+    // Match current elements against incoming — unchanged tokens stay in place
+    const toRemove = [];
+    for (const curr of currentPool) {
+      const match = newPool.find((n) => !n.used && n.key === curr.key);
+      if (match) {
+        match.used = true;
+      } else {
+        toRemove.push(curr.el);
+      }
+    }
+    const toAdd = newPool.filter((n) => !n.used);
+
+    if (toRemove.length === 0 && toAdd.length === 0) return;
+
+    // Animate removed tokens sliding up, then add new ones sliding in from top
+    await Promise.all(toRemove.map((el) => this._animateTokenRemove(el)));
+    await Promise.all(toAdd.map((t) => this._placeTokenAnimated(pid, t.pos, t.type, t.value)));
+
+    // Rebuild flank mirrors from final main cell state (border positions only)
+    for (let pos = 0; pos < 9; pos++) {
+      const col = pos % 3;
+      if (col !== 0 && col !== 2) continue;
+      const flankCell = this._getFlankCell(pid, pos);
+      if (!flankCell) continue;
+      flankCell.querySelectorAll(".bc-token").forEach((el) => el.remove());
+      const mainCell = document.getElementById(`bc-cell-${pid}-${pos}`);
+      if (!mainCell) continue;
+      [...mainCell.querySelectorAll(".bc-token")].forEach((el, i) => {
+        const clone = el.cloneNode(true);
+        clone.style.top = `${3 + i * 40}px`;
+        clone.style.right = "3px";
+        flankCell.appendChild(clone);
+      });
+    }
   }
 
   async notif_tokensCleared() {
-    console.log("[bc] Tokens cleared");
-    // TODO Phase 7b: remove token elements from all cells
+    document.querySelectorAll(".bc-token").forEach((el) => el.remove());
   }
 
-  // Center cards flipped face-down after upgrade — smooth flip via setCardVisible
+  // Upgrade confirmed: produced cards flip face-down; upgraded cards removed from grid stock
   async notif_upgradeConfirmed(args) {
     const pid = String(args.player_id);
     const gridStock = this._gridStocks[pid];
-    for (const centerPos of [1, 4, 7]) {
-      const card = gridStock?.getCards().find((c) => c.position === centerPos);
-      if (card) this.cardManager.setCardVisible(card, false);
+    if (!gridStock) return;
+
+    const isOwnNotif = pid === String(this._myPid);
+
+    // Produced cards: flip face-down (own player already flipped locally via _onFlipDown)
+    if (!isOwnNotif) {
+      for (const cardId of args.produced_ids || []) {
+        const card = gridStock.getCards().find((c) => c.id === parseInt(String(cardId), 10));
+        if (card) this.cardManager.setCardVisible(card, false);
+      }
     }
-    await new Promise((r) => setTimeout(r, 550));
-    console.log(`[bc] Upgrade — Player ${args.player_id}: ${args.produced_count} produced, ${args.upgraded_count} upgraded`);
+    // Upgraded cards: remove from grid stock (returned to shared pile server-side)
+    for (const cardId of args.upgraded_ids || []) {
+      const card = gridStock.getCards().find((c) => c.id === parseInt(String(cardId), 10));
+      if (card) await gridStock.removeCard(card);
+    }
+    // Place replacement cards face-down at their grid positions
+    for (const c of args.placed_cards || []) {
+      const pos = parseInt(String(c.position), 10);
+      const existing = gridStock.getCards().find((card) => card.id === parseInt(String(c.id), 10));
+      if (existing) continue;
+      await gridStock.addCard({ id: parseInt(String(c.id), 10), position: pos });
+    }
+    await new Promise((r) => setTimeout(r, 400));
   }
 
   // Turn counter incremented
@@ -1227,12 +2262,49 @@ export class Game {
     document.querySelectorAll(".bc-first-player-marker").forEach((el) => el.style.setProperty("display", "none"));
     const fpEl = document.getElementById(`bc-fp-${args.first_player_id}`);
     if (fpEl) fpEl.style.removeProperty("display");
+
+    document.querySelectorAll(".bc-col-fp-marker").forEach((el) => el.style.setProperty("visibility", "hidden"));
+    const firstColEl = document.getElementById(`bc-col-fp-${args.first_player_id}`);
+    if (firstColEl) firstColEl.style.removeProperty("visibility");
   }
 
-  // All grid cards returned to deck at start of new round — clear via SlotStock
+  // All grid cards returned to deck at start of new round — animate then clear
   async notif_deckShuffled(args) {
     const pid = String(args.player_id);
-    await this._gridStocks[pid]?.removeAll();
+    const gridStock = this._gridStocks[pid];
+    if (gridStock) {
+      // Animate each card flying to the deck pile (staggered)
+      const deckTarget = document.getElementById(`bc-deck-pile-${pid}`) ?? document.getElementById(`bc-hand-area-${pid}`);
+      const cards = gridStock.getCards();
+      if (deckTarget && cards.length > 0) {
+        const toRect = deckTarget.getBoundingClientRect();
+        const toCx = toRect.left + toRect.width / 2;
+        const toCy = toRect.top + toRect.height / 2;
+        const anims = cards.map(
+          (card, i) =>
+            new Promise((resolve) => {
+              const el = this.cardManager.getCardElement(card);
+              if (!el) {
+                resolve();
+                return;
+              }
+              const from = el.getBoundingClientRect();
+              const dx = toCx - (from.left + from.width / 2);
+              const dy = toCy - (from.top + from.height / 2);
+              setTimeout(() => {
+                el.style.transition = "transform 350ms ease-in, opacity 350ms ease-in";
+                el.style.transform = `translate(${dx}px,${dy}px) scale(0.55)`;
+                el.style.opacity = "0";
+                el.style.zIndex = "200";
+                setTimeout(resolve, 360);
+              }, i * 60);
+            }),
+        );
+        await Promise.all(anims);
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      await gridStock.removeAll();
+    }
 
     for (let row = 0; row < 3; row++) {
       if (pid === this._prevOppPid) {
@@ -1248,13 +2320,14 @@ export class Game {
 
   // Solo: bot placed cards face-down at start of round
   async notif_botCardsDeployed(args) {
+    const botCard = args.family ? { family: args.family } : null;
     for (const side of ["left", "right"]) {
       const count = side === "left" ? (args.left_count ?? 3) : (args.right_count ?? 3);
       const flankSide = side === "right" ? "left" : "right";
       for (let row = 0; row < 3; row++) {
         const flank = document.getElementById(`bc-flank-${flankSide}-${row}`);
         if (flank) {
-          flank.innerHTML = row < count ? this._cardHtml(null) : "";
+          flank.innerHTML = row < count ? this._cardHtml(botCard) : "";
         }
       }
     }
@@ -1299,26 +2372,40 @@ export class Game {
     console.log(`[bc] Kept Silver card #${c.id}: ${name}`);
   }
 
-  // Private: remaining draft cards from the previous pass are arriving.
-  // Cache them for the state fallback, then animate remaining hand cards sliding left.
-  async notif_silverCardsReceived(args) {
-    this.silverDraft._pendingCards = args.cards || [];
+  // Private: server pushes the draft hand at state entry (reliable delivery path).
+  async notif_draftCardsDealt(args) {
+    const draftCards = args.draft_cards || [];
+    const deckCards = args.deck_cards || [];
+    const draftRound = args.draft_round || 1;
 
-    const handStock = this._handStocks[this._myPid];
-    if (handStock) {
-      const remaining = handStock.getCards();
-      const els = remaining.map((c) => this.cardManager.getCardElement(c)).filter(Boolean);
-      if (els.length > 0) {
-        els.forEach((el, i) => {
-          el.style.transition = `transform 0.3s ${i * 60}ms ease-in, opacity 0.3s ${i * 60}ms ease-in`;
-          el.style.transform = "translateX(-140px)";
-          el.style.opacity = "0";
-        });
-        await new Promise((r) => setTimeout(r, 350 + els.length * 60));
-      }
-      await handStock.removeAll();
+    await this.silverDraft._build(draftCards, deckCards, draftRound);
+  }
+
+  // Private: pass 1 → pass 2 transition.
+  // Animate out the cards still in hand (the unchosen ones from pass 1).
+  // The incoming cards are NOT added here — _build() (via onPlayerActivationChange or
+  // notif_draftCardsDealt) is the single source of truth for populating the hand.
+  async notif_silverCardsReceived(args) {
+    const pid = this.silverDraft._pid ?? this._myPid;
+    const handStock = this._handStocks[pid];
+    if (!handStock) return;
+
+    // Animate out whatever is currently in the hand stock.
+    const remaining = handStock.getCards();
+
+    const outEls = remaining.map((c) => this.cardManager.getCardElement(c)).filter(Boolean);
+    if (outEls.length > 0) {
+      outEls.forEach((el, i) => {
+        el.style.transition = `transform 0.3s ${i * 60}ms ease-in, opacity 0.3s ${i * 60}ms ease-in`;
+        el.style.transform = "translateY(40px)";
+        el.style.opacity = "0";
+      });
+      await new Promise((r) => setTimeout(r, 300 + outEls.length * 60));
     }
-    console.log(`[bc] Received ${args.cards?.length ?? 0} cards for next draft pass`);
+    await handStock.removeAll();
+
+    // _build() fires next (via onPlayerActivationChange or notif_draftCardsDealt)
+    // and will slide in the new cards with its own animation.
   }
 
   // Private: the last unchosen card from pass 2 was auto-added to this player's deck.
@@ -1342,7 +2429,8 @@ export class Game {
     console.log(`[bc] Last Silver card #${c.id} added to deck`);
   }
 
-  // Silver draft complete: flip face-down → stack into pile → shuffle → fade out
+  // Silver draft complete: flip face-down → stack into pile.
+  // Shuffle animation is deferred to notif_handDealt (first Deploy entry).
   async notif_silverDraftComplete() {
     const fanStock = this.silverDraft._draftFanStock;
     if (fanStock) {
@@ -1365,35 +2453,39 @@ export class Game {
           el.style.transform = `translateY(${dy}px)`;
         });
         await new Promise((r) => setTimeout(r, 320 + (els.length - 1) * 40));
-
-        // 3. Shuffle wobble — rotate the deck area container
-        const deckArea = document.getElementById(`bc-draft-deck-${this._myPid}`);
-        if (deckArea) {
-          for (const [angle, dur] of [
-            [6, 90],
-            [-6, 90],
-            [4, 80],
-            [-4, 80],
-            [0, 80],
-          ]) {
-            deckArea.style.transition = `transform ${dur}ms ease-in-out`;
-            deckArea.style.transform = `rotate(${angle}deg)`;
-            await new Promise((r) => setTimeout(r, dur + 15));
-          }
-          // 4. Fade out
-          deckArea.style.transition = "opacity 0.35s ease";
-          deckArea.style.transform = "";
-          deckArea.style.opacity = "0";
-          await new Promise((r) => setTimeout(r, 380));
-        }
+        // Deck area and fanStock are intentionally left alive for the shuffle in notif_handDealt.
       }
-
-      await fanStock.removeAll();
-      this.silverDraft._draftFanStock = null;
     }
     document.getElementById("bc-draft-ui")?.remove();
-    document.getElementById(`bc-draft-deck-${this._myPid}`)?.remove();
-    console.log("[bc] Silver draft complete — decks shuffled");
+    this.silverDraft._confirmedThisSession = false;
+    console.log("[bc] Silver draft complete — deck stacked, shuffle deferred to Deploy");
+  }
+
+  // Gambler combat effect rolled a die — animate the roll centered on the triggering card.
+  // Fires before tokensSyncPlayer and combatEffectApplied so the dice animation plays first.
+  async notif_combatDiceRolled(args) {
+    const pid = String(args.player_id);
+    const pos = parseInt(String(args.position), 10);
+    const cell = document.getElementById(`bc-cell-${pid}-${pos}`);
+    const target = cell ?? document.getElementById(`bc-dice-area-${pid}`);
+    if (!target) return;
+    await this._animateDice(target, parseInt(String(args.dice_roll), 10));
+  }
+
+  // Mousse (1:5) flipped face-down during combat — animate the flip and update the flank mirror
+  async notif_cardFlippedFaceDown(args) {
+    const pid = String(args.player_id);
+    const pos = parseInt(String(args.position), 10);
+    const gridStock = this._gridStocks[pid];
+    if (!gridStock) return;
+    const card = gridStock.getCards().find((c) => c.position === pos);
+    if (card) {
+      await this.cardManager.setCardVisible(card, false);
+    }
+    const flankCell = this._getFlankCell(pid, pos);
+    if (flankCell) {
+      flankCell.innerHTML = this._cardHtml({ family: args.family });
+    }
   }
 
   // Private: hand dealt at Deploy state entry (sent per player from onEnteringState).
@@ -1401,12 +2493,122 @@ export class Game {
   // Also handles the reload race: notification can arrive before onPlayerActivationChange
   // calls _build(), so we seed deploy._myPid from the game-level _myPid (always set in setup).
   async notif_handDealt(args) {
-    if (!this.deploy._myPid) this.deploy._myPid = this._myPid;
-    // Mark that at least one real turn transition has occurred in this JS session.
-    // After this, gamedatas.hand is considered stale and the onPlayerActivationChange
-    // fallback will skip it, waiting for subsequent notif_handDealt calls instead.
     this.deploy._handDealtThisSession = true;
+    if (!this.deploy._myPid) {
+      // onPlayerActivationChange has not fired yet — store args so it can consume them.
+      this.deploy._pendingHandArgs = { hand: args.hand || [], deck_count: args.deck_count || 0, gems_charged: args.gems_charged || 0 };
+      return;
+    }
+
+    // If the Silver Draft deck area is still visible, animate the shuffle before dealing.
+    const fanStock = this.silverDraft._draftFanStock;
+    if (fanStock) {
+      const deckArea = document.getElementById(`bc-draft-deck-${this._myPid}`);
+      if (deckArea) {
+        for (const [angle, dur] of [
+          [6, 90],
+          [-6, 90],
+          [4, 80],
+          [-4, 80],
+          [0, 80],
+        ]) {
+          deckArea.style.transition = `transform ${dur}ms ease-in-out`;
+          deckArea.style.transform = `rotate(${angle}deg)`;
+          await new Promise((r) => setTimeout(r, dur + 15));
+        }
+        deckArea.style.transition = "opacity 0.35s ease";
+        deckArea.style.transform = "";
+        deckArea.style.opacity = "0";
+        await new Promise((r) => setTimeout(r, 380));
+      }
+      await fanStock.removeAll();
+      this.silverDraft._draftFanStock = null;
+      document.getElementById(`bc-draft-deck-${this._myPid}`)?.remove();
+    }
+
     await this.deploy._buildHand(args.hand || [], args.deck_count || 0, args.gems_charged || 0);
+  }
+
+  // Private: UpgradeMain entered — send center cards + options to player.
+  // Authoritative path for private state args delivery.
+  async notif_upgradeMainEntered(args) {
+    console.log("[UpgradeMain] notif_upgradeMainEntered", args);
+    if (!this.upgradeMain._myPid) this.upgradeMain._myPid = this._myPid;
+    this.upgradeMain._teardown();
+    this.upgradeMain._applyArgs(args);
+    await new Promise((r) => setTimeout(r, 150));
+    this.upgradeMain._build();
+  }
+
+  // Private: UpgradePickReplacement entered — send 3 options to player.
+  async notif_upgradePickReplacementEntered(args) {
+    console.log("[UpgradePickReplacement] notif_upgradePickReplacementEntered", args);
+    if (!this.upgradePickReplacement._myPid) this.upgradePickReplacement._myPid = this._myPid;
+    this.upgradePickReplacement._teardown();
+    this.upgradePickReplacement._applyArgs(args);
+    await new Promise((r) => setTimeout(r, 150));
+    this.upgradePickReplacement._build();
+  }
+
+  // Public: a card was flipped face-down (produced) — update opponent's grid.
+  async notif_upgradeFlipDown(args) {
+    const pid = String(args.player_id);
+    const gridStock = this._gridStocks[pid];
+    if (!gridStock) return;
+    if (pid === String(this._myPid)) return; // own player already flipped locally in _onFlipDown
+    const card = gridStock.getCards().find((c) => c.id === parseInt(String(args.card_id), 10));
+    if (card) this.cardManager.setCardVisible(card, false);
+  }
+
+  // Private: own player's replacement card placed — animate to grid slot.
+  async notif_upgradeReplacementPicked(args) {
+    const pid = String(this._myPid);
+    const gridStock = this._gridStocks[pid];
+    if (!gridStock) return;
+    const pos = parseInt(String(args.position), 10);
+    const existing = gridStock.getCards().find((c) => c.id === parseInt(String(args.chosen_id), 10));
+    if (existing) return;
+    await gridStock.addCard({ id: parseInt(String(args.chosen_id), 10), position: pos });
+    document.getElementById(`bc-upgrade-opts-${args.orig_card_id}`)?.remove();
+  }
+
+  // Public: another player placed a replacement card — show face-down in their grid.
+  async notif_upgradeReplacementPlaced(args) {
+    const pid = String(args.player_id);
+    if (pid === String(this._myPid)) return; // own handled by notif_upgradeReplacementPicked
+    const gridStock = this._gridStocks[pid];
+    if (!gridStock) return;
+    const pos = parseInt(String(args.position), 10);
+    const existing = gridStock.getCards().find((c) => c.id === parseInt(String(args.chosen_id), 10));
+    if (existing) return;
+    await gridStock.addCard({ id: parseInt(String(args.chosen_id), 10), position: pos });
+  }
+
+  // Legacy: kept for backward compat in case old notifs replay
+  async notif_upgradeDealt(args) {
+    console.log("[UpgradeMain] notif_upgradeDealt (legacy)", args);
+    if (!this.upgradeMain._myPid) this.upgradeMain._myPid = this._myPid;
+    this.upgradeMain._teardown();
+    this.upgradeMain._applyArgs(args);
+    this.upgradeMain._build();
+  }
+
+  async notif_upgradeCardsDealt(args) {
+    console.log("[UpgradePickReplacement] notif_upgradeCardsDealt (legacy)", args);
+  }
+
+  async notif_upgradeCardsConfirmed(args) {
+    document.getElementById("bc-upgrade-cards-ui")?.remove();
+    const pid = String(args.player_id);
+    const gridStock = this._gridStocks[pid];
+    if (!gridStock) return;
+    for (const c of args.placed_cards || []) {
+      const pos = parseInt(String(c.position), 10);
+      const existing = gridStock.getCards().find((card) => card.id === parseInt(String(c.id), 10));
+      if (existing) continue;
+      await gridStock.addCard({ id: parseInt(String(c.id), 10), position: pos });
+    }
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   // Private: new card drawn after mulligan (sent only to the active player)
@@ -1416,6 +2618,7 @@ export class Game {
     const discardedCard = handStock?.getCards().find((c) => c.id === discardedId);
 
     if (discardedCard) {
+      // Clean up slot state
       const assignedSlot = this.deploy._cardSlot[discardedId];
       if (assignedSlot) {
         this.deploy._slots[assignedSlot] = null;
@@ -1426,18 +2629,40 @@ export class Game {
         this.deploy._selectedCard = null;
         this.deploy._hideSlotButtons();
       }
+
+      // Animate: flip face-down, then slide under deck pile (no fade — looks like going under)
+      const cardEl = this.cardManager.getCardElement(discardedCard);
+      if (cardEl) {
+        this.cardManager.setCardVisible(discardedCard, false);
+        await new Promise((r) => setTimeout(r, 400));
+
+        const deckEl = document.getElementById(`bc-deck-pile-${this.deploy._myPid}`);
+        if (deckEl) {
+          const cRect = cardEl.getBoundingClientRect();
+          const dRect = deckEl.getBoundingClientRect();
+          const dx = dRect.left + dRect.width / 2 - (cRect.left + cRect.width / 2);
+          const dy = dRect.top + dRect.height / 2 - (cRect.top + cRect.height / 2);
+          cardEl.style.zIndex = "0"; // slide behind deck pile visually
+          cardEl.style.transition = "transform 350ms ease-in";
+          cardEl.style.transform = `translate(${dx}px, ${dy}px)`;
+          await new Promise((r) => setTimeout(r, 380));
+        }
+      }
+
       await handStock.removeCard(discardedCard);
     }
 
     const c = args.new_card;
     if (c && handStock) {
       const newCard = { id: c.id, type: c.type, type_arg: c.type_arg, family: c.family };
-      await handStock.addCard(newCard);
+      const deckEl = document.getElementById(`bc-deck-pile-${this.deploy._myPid}`);
+      await handStock.addCard(newCard, deckEl ? { fromElement: deckEl } : undefined);
       const newEl = this.cardManager.getCardElement(newCard);
       if (newEl) {
         newEl.classList.add("bc-hand-card");
         newEl.dataset.cardId = String(newCard.id);
         newEl.onclick = (e) => this.deploy._onCardClick(e);
+        if (newEl?.id) this.bga.gameui?.addTooltipHtml?.(newEl.id, this._cardTooltipHtml(newCard));
       }
     }
   }

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"/c/Users/BenjaminLEVA/.claude/\")",
+      "Read(//c/Users/BenjaminLEVA/.claude//**)"
+    ]
+  }
+}

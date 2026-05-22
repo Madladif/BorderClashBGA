@@ -76,6 +76,11 @@ class CardEffects
         return self::$DATA[$rank][$design]['traits'] ?? [];
     }
 
+    public static function getName(int $rank, int $design): string
+    {
+        return self::$DATA[$rank][$design]['name'] ?? '?';
+    }
+
     // ---------------------------------------------------------------------------
     // DB helpers
     // ---------------------------------------------------------------------------
@@ -234,11 +239,13 @@ class CardEffects
         $col    = $gridPosition % 3; // 0=left-border, 1=center, 2=right-border
 
         $out = [
-            'strength_bonus' => 0,
-            'vp_bonus'       => 0,
-            'after_combat'   => false,
-            'dice_roll'      => null,
-            'rage_toggle'    => null,
+            'strength_bonus'         => 0,
+            'vp_bonus'               => 0,
+            'after_combat'           => false,
+            'dice_roll'              => null,
+            'rage_toggle'            => null,
+            'effect_text'            => null,
+            'card_flipped_face_down' => false,
         ];
 
         switch ("{$rank}:{$design}") {
@@ -250,7 +257,11 @@ class CardEffects
                 $out['dice_roll'] = $d;
                 $next = $gridPosition + 3;
                 if ($next <= 8) {
-                    self::addToken($playerId, $next, 'gambler', $d <= 2 ? -1 : 1, $game);
+                    $val = $d <= 2 ? -1 : 1;
+                    self::addToken($playerId, $next, 'gambler', $val, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → ' . ($val > 0 ? '+' . $val : $val) . ' token on next pos';
+                } else {
+                    $out['effect_text'] = '🎲' . $d . ' (no next pos)';
                 }
                 break;
 
@@ -260,15 +271,20 @@ class CardEffects
                     $theirs = self::getTraits((int)$rivalCard['type'], (int)$rivalCard['type_arg']);
                     if (!empty(array_intersect($mine, $theirs))) {
                         self::chargeGems($playerId, 1, $game);
+                        $out['effect_text'] = 'shared trait → +1 gem';
+                    } else {
+                        $out['effect_text'] = 'no shared trait';
                     }
                 }
                 break;
 
             case '1:3': // Troll: enraged → +2 force; always toggle rage
-                if (self::getRage($playerId, $game) === 1) {
+                $wasEnraged = self::getRage($playerId, $game) === 1;
+                if ($wasEnraged) {
                     $out['strength_bonus'] += 2;
                 }
                 $out['rage_toggle'] = self::toggleRage($playerId, $game);
+                $out['effect_text'] = $wasEnraged ? 'enraged → +2 str; now calm' : 'calm → now enraged';
                 break;
 
             case '1:4': // Gros-bras: highest printed force in column → charge 1 gem
@@ -283,6 +299,9 @@ class CardEffects
                 }
                 if ($top) {
                     self::chargeGems($playerId, 1, $game);
+                    $out['effect_text'] = 'highest in col → +1 gem';
+                } else {
+                    $out['effect_text'] = 'not highest in col';
                 }
                 break;
 
@@ -291,12 +310,20 @@ class CardEffects
                     $game->DbQuery(
                         "UPDATE bc_card SET card_face_up = 0 WHERE card_id = {$card['id']}"
                     );
+                    $game->DbQuery(
+                        "DELETE FROM bc_token WHERE player_id = {$playerId} AND grid_position = {$gridPosition}"
+                    );
                     self::chargeGems($playerId, 2, $game);
+                    $out['effect_text'] = 'border → face-down, +2 gems';
+                    $out['card_flipped_face_down'] = true;
+                } else {
+                    $out['effect_text'] = 'center (no effect)';
                 }
                 break;
 
             case '1:6': // Quartier-Maître: add pirate_gold token on this card
                 self::addToken($playerId, $gridPosition, 'pirate_gold', 0, $game);
+                $out['effect_text'] = 'pirate gold token here';
                 break;
 
             // --- Silver Flambeur ---
@@ -306,23 +333,33 @@ class CardEffects
                 $out['dice_roll'] = $d;
                 $next = $gridPosition + 3;
                 if ($next <= 8) {
-                    self::addToken($playerId, $next, 'gambler', $d <= 2 ? -2 : 4, $game);
+                    $val = $d <= 2 ? -2 : 4;
+                    self::addToken($playerId, $next, 'gambler', $val, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → ' . ($val > 0 ? '+' . $val : $val) . ' token on next pos';
+                } else {
+                    $out['effect_text'] = '🎲' . $d . ' (no next pos)';
                 }
                 break;
 
             case '2:2': // Croupier: +1 force per Impact card
-                $out['strength_bonus'] += self::countTrait($playerId, 'impact', $game);
+                $n = self::countTrait($playerId, 'impact', $game);
+                $out['strength_bonus'] += $n;
+                $out['effect_text'] = $n > 0 ? '+' . $n . ' str (' . $n . ' Impact card(s))' : 'no Impact cards';
                 break;
 
             case '2:3': // Pièce: roll die → token on THIS card (−3 / +3)
                 $d = rand(1, 6);
                 $out['dice_roll'] = $d;
-                self::addToken($playerId, $gridPosition, 'gambler', $d <= 2 ? -3 : 3, $game);
+                $val = $d <= 2 ? -3 : 3;
+                self::addToken($playerId, $gridPosition, 'gambler', $val, $game);
+                $out['effect_text'] = '🎲' . $d . ' → ' . ($val > 0 ? '+' . $val : $val) . ' token here';
                 break;
 
             case '2:4': // Tricheur: charge 1 gem; +2 force per charged gem (after charge)
                 self::chargeGems($playerId, 1, $game);
-                $out['strength_bonus'] += 2 * $game->gemsCharged->get($playerId);
+                $charged = $game->gemsCharged->get($playerId);
+                $out['strength_bonus'] += 2 * $charged;
+                $out['effect_text'] = '+1 gem (' . $charged . ' charged) → +' . (2 * $charged) . ' str';
                 break;
 
             case '2:5': // Mécène: collect all gambler tokens from this column → flip to +
@@ -341,6 +378,9 @@ class CardEffects
                 }
                 if ($total > 0) {
                     self::addToken($playerId, $gridPosition, 'gambler', $total, $game);
+                    $out['effect_text'] = 'collected ' . $total . ' → +' . $total . ' token here';
+                } else {
+                    $out['effect_text'] = 'no tokens to collect';
                 }
                 break;
 
@@ -348,6 +388,7 @@ class CardEffects
                 $d = rand(1, 6);
                 $out['dice_roll']      = $d;
                 $out['strength_bonus'] += $d;
+                $out['effect_text'] = '🎲' . $d . ' → +' . $d . ' str';
                 break;
 
             // --- Silver Brute ---
@@ -355,47 +396,72 @@ class CardEffects
             case '2:7': // Mercenaire: enraged → +3 force; calm → toggle rage
                 if (self::getRage($playerId, $game) === 1) {
                     $out['strength_bonus'] += 3;
+                    $out['effect_text'] = 'enraged → +3 str';
                 } else {
                     $out['rage_toggle'] = self::toggleRage($playerId, $game);
+                    $out['effect_text'] = 'calm → now enraged';
                 }
                 break;
 
             case '2:8': // Grizzly: border → discharge 1 gem (mandatory) → +5 force; always toggle rage
                 if ($col !== 1) {
-                    if (self::dischargeGems($playerId, 1, $game) > 0) {
+                    $discharged = self::dischargeGems($playerId, 1, $game);
+                    if ($discharged > 0) {
                         $out['strength_bonus'] += 5;
+                        $out['effect_text'] = '−1 gem → +5 str; rage toggled';
+                    } else {
+                        $out['effect_text'] = 'no charged gem; rage toggled';
                     }
+                } else {
+                    $out['effect_text'] = 'center → rage toggled';
                 }
                 $out['rage_toggle'] = self::toggleRage($playerId, $game);
                 break;
 
             case '2:9': // Videur: +4 force if rival printed force > 2; calm → toggle rage
+                $parts = [];
                 if ($rivalCard !== null) {
-                    if (self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']) > 2) {
+                    $rivalForce = self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']);
+                    if ($rivalForce > 2) {
                         $out['strength_bonus'] += 4;
+                        $parts[] = 'rival force ' . $rivalForce . ' → +4 str';
+                    } else {
+                        $parts[] = 'rival force ' . $rivalForce . ' (no bonus)';
                     }
                 }
                 if (self::getRage($playerId, $game) === 0) {
                     $out['rage_toggle'] = self::toggleRage($playerId, $game);
+                    $parts[] = 'calm → enraged';
                 }
+                $out['effect_text'] = !empty($parts) ? implode('; ', $parts) : null;
                 break;
 
             case '2:10': // Berserker: calm → gain rival's printed force as bonus
                 if (self::getRage($playerId, $game) === 0 && $rivalCard !== null) {
-                    $out['strength_bonus'] += self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']);
+                    $rivalForce = self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']);
+                    $out['strength_bonus'] += $rivalForce;
+                    $out['effect_text'] = 'calm → +' . $rivalForce . ' str (rival force)';
+                } else {
+                    $out['effect_text'] = 'enraged (no bonus)';
                 }
                 break;
 
             case '2:11': // Loup-Garou: enraged → 2 VP; always toggle rage
-                if (self::getRage($playerId, $game) === 1) {
+                $wasEnraged = self::getRage($playerId, $game) === 1;
+                if ($wasEnraged) {
                     $out['vp_bonus'] += 2;
                 }
                 $out['rage_toggle'] = self::toggleRage($playerId, $game);
+                $out['effect_text'] = $wasEnraged ? 'enraged → +2 VP; now calm' : 'calm → now enraged';
                 break;
 
             case '2:12': // Barbare: enraged → +1 force per Impact card
                 if (self::getRage($playerId, $game) === 1) {
-                    $out['strength_bonus'] += self::countTrait($playerId, 'impact', $game);
+                    $n = self::countTrait($playerId, 'impact', $game);
+                    $out['strength_bonus'] += $n;
+                    $out['effect_text'] = 'enraged → +' . $n . ' str (' . $n . ' Impact)';
+                } else {
+                    $out['effect_text'] = 'calm (no bonus)';
                 }
                 break;
 
@@ -404,20 +470,29 @@ class CardEffects
             case '2:13': // Pillard: any Gold card in play → charge 2 gems
                 if (count(self::getGoldCards($playerId, $game)) > 0) {
                     self::chargeGems($playerId, 2, $game);
+                    $out['effect_text'] = 'Gold in play → +2 gems';
+                } else {
+                    $out['effect_text'] = 'no Gold (no charge)';
                 }
                 break;
 
             case '2:14': // Second: +3 force per Gold card in this column
+                $bonus = 0;
                 foreach (self::getColumnCards($playerId, $col, $game) as $other) {
                     if (self::getEffectiveRank($playerId, (int)$other['position'], (int)$other['type'], $game) === 3) {
-                        $out['strength_bonus'] += 3;
+                        $bonus += 3;
                     }
                 }
+                $out['strength_bonus'] += $bonus;
+                $out['effect_text'] = $bonus > 0 ? '+' . $bonus . ' str (' . intdiv($bonus, 3) . ' Gold in col)' : 'no Gold in col';
                 break;
 
             case '2:15': // Boucanier: +3 force if no Bronze card in play
                 if (self::countBronzeCards($playerId, $game) === 0) {
                     $out['strength_bonus'] += 3;
+                    $out['effect_text'] = 'no Bronze → +3 str';
+                } else {
+                    $out['effect_text'] = 'Bronze in play (no bonus)';
                 }
                 break;
 
@@ -433,9 +508,17 @@ class CardEffects
                     if (!empty($prevCard) && (int)$prevCard['face_up'] === 1) {
                         $effRank = self::getEffectiveRank($playerId, $prev, (int)$prevCard['type'], $game);
                         if ($effRank === 3) {
-                            $out['strength_bonus'] += self::getBaseForce((int)$prevCard['type'], (int)$prevCard['type_arg']);
+                            $force = self::getBaseForce((int)$prevCard['type'], (int)$prevCard['type_arg']);
+                            $out['strength_bonus'] += $force;
+                            $out['effect_text'] = 'prev pos Gold → +' . $force . ' str';
+                        } else {
+                            $out['effect_text'] = 'prev pos not Gold';
                         }
+                    } else {
+                        $out['effect_text'] = 'no face-up card on prev pos';
                     }
+                } else {
+                    $out['effect_text'] = 'row 1 (no prev pos)';
                 }
                 break;
 
@@ -444,6 +527,9 @@ class CardEffects
                     $effRank = self::getEffectiveRank($rivalPlayerId, $rivalGridPos, (int)$rivalCard['type'], $game);
                     if ($effRank === 3) {
                         $out['strength_bonus'] += 4;
+                        $out['effect_text'] = 'rival is Gold → +4 str';
+                    } else {
+                        $out['effect_text'] = 'rival not Gold (no bonus)';
                     }
                 }
                 break;
@@ -453,6 +539,9 @@ class CardEffects
                 $next = $gridPosition + 3;
                 if ($next <= 8) {
                     self::addToken($playerId, $next, 'pirate_gold', 0, $game);
+                    $out['effect_text'] = 'pirate gold here + next pos';
+                } else {
+                    $out['effect_text'] = 'pirate gold here (row 3, no next)';
                 }
                 break;
 
@@ -463,10 +552,13 @@ class CardEffects
                 $out['dice_roll'] = $d;
                 if ($d <= 2) {
                     self::addToken($playerId, $gridPosition, 'gambler', -4, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → −4 token here';
                 } elseif ($d <= 4) {
                     self::chargeGems($playerId, 3, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → charge all gems';
                 } else {
                     self::addToken($playerId, $gridPosition, 'gambler', 8, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → +8 token here';
                 }
                 break;
 
@@ -482,21 +574,29 @@ class CardEffects
                 }
                 if ($total > 0) {
                     self::addToken($playerId, $gridPosition, 'gambler', $total, $game);
+                    $out['effect_text'] = 'collected ' . $total . ' → +' . $total . ' token here';
+                } else {
+                    $out['effect_text'] = 'no tokens in play';
                 }
                 break;
 
             case '3:3': // Double 6: after combat, winner rolls die and adds to VP
                 $out['after_combat'] = true;
+                $out['effect_text'] = 'winner rolls 🎲 for bonus VP';
                 break;
 
             // --- Gold Brute ---
 
             case '3:4': // Brunhilde: enraged → add printed force of other face-up column cards; always toggle rage
-                if (self::getRage($playerId, $game) === 1) {
+                $wasEnraged = self::getRage($playerId, $game) === 1;
+                if ($wasEnraged) {
                     foreach (self::getColumnCards($playerId, $col, $game) as $other) {
                         if ((int)$other['id'] === (int)$card['id']) continue;
                         $out['strength_bonus'] += self::getBaseForce((int)$other['type'], (int)$other['type_arg']);
                     }
+                    $out['effect_text'] = 'enraged → +' . $out['strength_bonus'] . ' str (col cards); now calm';
+                } else {
+                    $out['effect_text'] = 'calm → now enraged';
                 }
                 $out['rage_toggle'] = self::toggleRage($playerId, $game);
                 break;
@@ -505,14 +605,19 @@ class CardEffects
                 if (self::getRage($playerId, $game) === 1) {
                     $n = self::dischargeGems($playerId, $game->gemsCharged->get($playerId), $game);
                     $out['strength_bonus'] += 3 * $n;
+                    $out['effect_text'] = $n > 0 ? 'enraged → −' . $n . ' gems → +' . (3 * $n) . ' str' : 'enraged but no gems';
+                } else {
+                    $out['effect_text'] = 'calm (no bonus)';
                 }
                 break;
 
             case '3:6': // Shockfang: enraged → +8 force; always toggle rage
-                if (self::getRage($playerId, $game) === 1) {
+                $wasEnraged = self::getRage($playerId, $game) === 1;
+                if ($wasEnraged) {
                     $out['strength_bonus'] += 8;
                 }
                 $out['rage_toggle'] = self::toggleRage($playerId, $game);
+                $out['effect_text'] = $wasEnraged ? 'enraged → +8 str; now calm' : 'calm → now enraged';
                 break;
 
             // --- Gold Pirate ---
@@ -523,19 +628,33 @@ class CardEffects
                     if ((int)$other['id'] === (int)$card['id']) continue;
                     if (self::getEffectiveRank($playerId, (int)$other['position'], (int)$other['type'], $game) === 3) {
                         $game->DbQuery("UPDATE bc_card SET card_face_up = 0 WHERE card_id = {$other['id']}");
+                        $game->DbQuery(
+                            "DELETE FROM bc_token WHERE player_id = {$playerId} AND grid_position = " . (int)$other['position']
+                        );
                         $flipped++;
                     }
                 }
                 $out['strength_bonus'] += 4 * $flipped;
+                $out['effect_text'] = $flipped > 0 ? 'flipped ' . $flipped . ' Gold → +' . (4 * $flipped) . ' str' : 'no Gold to flip';
                 break;
 
             case '3:8': // Lady Fortune: 2 VP per Gold card in play (including this one)
-                $out['vp_bonus'] += 2 * count(self::getGoldCards($playerId, $game));
+                $goldCount = count(self::getGoldCards($playerId, $game));
+                $out['vp_bonus'] += 2 * $goldCount;
+                $out['effect_text'] = '+2 VP × ' . $goldCount . ' Gold = +' . (2 * $goldCount) . ' VP';
                 break;
 
             case '3:9': // Davy Jones: +2 force per Gold card, −1 force per Bronze card
-                $out['strength_bonus'] += 2 * count(self::getGoldCards($playerId, $game))
-                                        - self::countBronzeCards($playerId, $game);
+                $goldCount   = count(self::getGoldCards($playerId, $game));
+                $bronzeCount = self::countBronzeCards($playerId, $game);
+                $bonus       = 2 * $goldCount - $bronzeCount;
+                $out['strength_bonus'] += $bonus;
+                $textParts = [];
+                if ($goldCount > 0)   $textParts[] = '+' . (2 * $goldCount) . ' (' . $goldCount . ' Gold)';
+                if ($bronzeCount > 0) $textParts[] = '−' . $bronzeCount . ' (' . $bronzeCount . ' Bronze)';
+                $out['effect_text'] = !empty($textParts)
+                    ? implode(' ', $textParts) . ' = ' . ($bonus >= 0 ? '+' . $bonus : $bonus) . ' str'
+                    : 'no Gold or Bronze';
                 break;
         }
 
@@ -613,6 +732,7 @@ class CardEffects
             'after_combat'   => false,
             'dice_roll'      => null,
             'rage_toggle'    => null,
+            'effect_text'    => null,
         ];
 
         switch ("{$rank}:{$design}") {
@@ -621,7 +741,11 @@ class CardEffects
                 $d = rand(1, 6);
                 $out['dice_roll'] = $d;
                 if ($row < 2) {
-                    self::addToken(self::BOT_PLAYER_ID, $nextPos, 'gambler', $d <= 2 ? -1 : 1, $game);
+                    $val = $d <= 2 ? -1 : 1;
+                    self::addToken(self::BOT_PLAYER_ID, $nextPos, 'gambler', $val, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → ' . ($val > 0 ? '+' . $val : $val) . ' token on next row';
+                } else {
+                    $out['effect_text'] = '🎲' . $d . ' (no next row)';
                 }
                 break;
 
@@ -632,77 +756,104 @@ class CardEffects
                 $newRage = $botRage === 0 ? 1 : 0;
                 $game->bga->globals->set('bot_rage', $newRage);
                 $out['rage_toggle'] = $newRage;
+                $out['effect_text'] = $botRage === 1 ? 'enraged → +2 str; now calm' : 'calm → now enraged';
                 break;
 
             case '1:6': // Quartier-Maître: pirate_gold token on this position
                 self::addToken(self::BOT_PLAYER_ID, $pos, 'pirate_gold', 0, $game);
+                $out['effect_text'] = 'pirate gold token here';
                 break;
 
             case '2:1': // Bookmaker: roll die → gambler token on next row
                 $d = rand(1, 6);
                 $out['dice_roll'] = $d;
                 if ($row < 2) {
-                    self::addToken(self::BOT_PLAYER_ID, $nextPos, 'gambler', $d <= 2 ? -2 : 4, $game);
+                    $val = $d <= 2 ? -2 : 4;
+                    self::addToken(self::BOT_PLAYER_ID, $nextPos, 'gambler', $val, $game);
+                    $out['effect_text'] = '🎲' . $d . ' → ' . ($val > 0 ? '+' . $val : $val) . ' token on next row';
+                } else {
+                    $out['effect_text'] = '🎲' . $d . ' (no next row)';
                 }
                 break;
 
             case '2:3': // Pièce: roll die → gambler token on this position
                 $d = rand(1, 6);
                 $out['dice_roll'] = $d;
-                self::addToken(self::BOT_PLAYER_ID, $pos, 'gambler', $d <= 2 ? -3 : 3, $game);
+                $val = $d <= 2 ? -3 : 3;
+                self::addToken(self::BOT_PLAYER_ID, $pos, 'gambler', $val, $game);
+                $out['effect_text'] = '🎲' . $d . ' → ' . ($val > 0 ? '+' . $val : $val) . ' token here';
                 break;
 
             case '2:6': // Complice: roll die, add result to force
                 $d = rand(1, 6);
                 $out['dice_roll']      = $d;
                 $out['strength_bonus'] += $d;
+                $out['effect_text'] = '🎲' . $d . ' → +' . $d . ' str';
                 break;
 
             case '2:7': // Mercenaire: enraged → +3; calm → toggle rage
                 if ($botRage === 1) {
                     $out['strength_bonus'] += 3;
+                    $out['effect_text'] = 'enraged → +3 str';
                 } else {
                     $game->bga->globals->set('bot_rage', 1);
                     $out['rage_toggle'] = 1;
+                    $out['effect_text'] = 'calm → now enraged';
                 }
                 break;
 
             case '2:9': // Videur: +4 if rival printed force > 2; calm → toggle rage
-                if ($rivalCard !== null
-                    && self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']) > 2) {
-                    $out['strength_bonus'] += 4;
+                $parts = [];
+                if ($rivalCard !== null) {
+                    $rivalForce = self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']);
+                    if ($rivalForce > 2) {
+                        $out['strength_bonus'] += 4;
+                        $parts[] = 'rival force ' . $rivalForce . ' → +4 str';
+                    } else {
+                        $parts[] = 'rival force ' . $rivalForce . ' (no bonus)';
+                    }
                 }
                 if ($botRage === 0) {
                     $game->bga->globals->set('bot_rage', 1);
                     $out['rage_toggle'] = 1;
+                    $parts[] = 'calm → enraged';
                 }
+                $out['effect_text'] = !empty($parts) ? implode('; ', $parts) : null;
                 break;
 
             case '2:10': // Berserker: calm → gain rival's printed force
                 if ($botRage === 0 && $rivalCard !== null) {
-                    $out['strength_bonus'] += self::getBaseForce(
-                        (int)$rivalCard['type'], (int)$rivalCard['type_arg']
-                    );
+                    $rivalForce = self::getBaseForce((int)$rivalCard['type'], (int)$rivalCard['type_arg']);
+                    $out['strength_bonus'] += $rivalForce;
+                    $out['effect_text'] = 'calm → +' . $rivalForce . ' str (rival force)';
+                } else {
+                    $out['effect_text'] = 'enraged (no bonus)';
                 }
                 break;
 
             case '2:14': // Second: +3 per Gold card in this bot column
+                $bonus = 0;
                 for ($r = 0; $r <= $row; $r++) {
-                    $p   = self::botGridPos($side, $r);
+                    $p    = self::botGridPos($side, $r);
                     $row2 = $game->getObjectFromDB(
                         "SELECT card_type AS type FROM bc_card
                          WHERE card_location = 'bot_grid_{$side}' AND card_location_arg = {$r}
                            AND card_face_up = 1"
                     );
                     if (!empty($row2) && self::getBotEffectiveRank($p, (int)$row2['type'], $game) === 3) {
-                        $out['strength_bonus'] += 3;
+                        $bonus += 3;
                     }
                 }
+                $out['strength_bonus'] += $bonus;
+                $out['effect_text'] = $bonus > 0 ? '+' . $bonus . ' str (' . intdiv($bonus, 3) . ' Gold in col)' : 'no Gold in col';
                 break;
 
             case '2:15': // Boucanier: +3 if bot has no face-up Bronze cards
                 if (self::countBotBronzeCards($game) === 0) {
                     $out['strength_bonus'] += 3;
+                    $out['effect_text'] = 'no Bronze → +3 str';
+                } else {
+                    $out['effect_text'] = 'Bronze in play (no bonus)';
                 }
                 break;
 
@@ -717,10 +868,14 @@ class CardEffects
                     );
                     if (!empty($prevCard)
                         && self::getBotEffectiveRank($prevPos, (int)$prevCard['type'], $game) === 3) {
-                        $out['strength_bonus'] += self::getBaseForce(
-                            (int)$prevCard['type'], (int)$prevCard['type_arg']
-                        );
+                        $force = self::getBaseForce((int)$prevCard['type'], (int)$prevCard['type_arg']);
+                        $out['strength_bonus'] += $force;
+                        $out['effect_text'] = 'prev row Gold → +' . $force . ' str';
+                    } else {
+                        $out['effect_text'] = 'prev row not Gold';
                     }
+                } else {
+                    $out['effect_text'] = 'row 1 (no prev row)';
                 }
                 break;
 
@@ -728,6 +883,9 @@ class CardEffects
                 if ($rivalCard !== null && $rivalPlayerId !== null && $rivalGridPos !== null) {
                     if (self::getEffectiveRank($rivalPlayerId, $rivalGridPos, (int)$rivalCard['type'], $game) === 3) {
                         $out['strength_bonus'] += 4;
+                        $out['effect_text'] = 'rival is Gold → +4 str';
+                    } else {
+                        $out['effect_text'] = 'rival not Gold (no bonus)';
                     }
                 }
                 break;
@@ -736,11 +894,15 @@ class CardEffects
                 self::addToken(self::BOT_PLAYER_ID, $pos, 'pirate_gold', 0, $game);
                 if ($row < 2) {
                     self::addToken(self::BOT_PLAYER_ID, $nextPos, 'pirate_gold', 0, $game);
+                    $out['effect_text'] = 'pirate gold here + next row';
+                } else {
+                    $out['effect_text'] = 'pirate gold here (row 3, no next)';
                 }
                 break;
 
             case '3:3': // Double 6: after combat, winner rolls die
                 $out['after_combat'] = true;
+                $out['effect_text'] = 'winner rolls 🎲 for bonus VP';
                 break;
 
             case '3:6': // Shockfang: enraged → +8; always toggle rage
@@ -750,10 +912,13 @@ class CardEffects
                 $newRage = $botRage === 0 ? 1 : 0;
                 $game->bga->globals->set('bot_rage', $newRage);
                 $out['rage_toggle'] = $newRage;
+                $out['effect_text'] = $botRage === 1 ? 'enraged → +8 str; now calm' : 'calm → now enraged';
                 break;
 
             case '3:8': // Lady Fortune: 2 VP per bot Gold card in play
-                $out['vp_bonus'] += 2 * self::countBotGoldCards($game);
+                $goldCount = self::countBotGoldCards($game);
+                $out['vp_bonus'] += 2 * $goldCount;
+                $out['effect_text'] = '+2 VP × ' . $goldCount . ' Gold = +' . (2 * $goldCount) . ' VP';
                 break;
         }
 

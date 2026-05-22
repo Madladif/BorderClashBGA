@@ -20,13 +20,17 @@ cat app/modules/php/Game.php
 
 > Until those state files exist, read `app/modules/php/States/PlayerTurn.php` and `NextPlayer.php` instead.
 
-Project documentation:
+---
+
+## Project documentation:
+
+- Asset pipeline → ASSETS.md
 - Architecture & DB schema → DESIGN.md
 - Card list & physical components → MATERIALS.md
-- Full rules → RULES.md
 - What's done / what's next → PLAN.md
 - Workflows & checklists → PROCEDURES.md
-- Asset pipeline → ASSETS.md
+- Full rules → RULES.md
+- Todo → TODO.md
 
 ---
 
@@ -34,42 +38,46 @@ Project documentation:
 
 - All comments in English
 - All strings, variable names, HTML IDs in English — French translations handled later via `clienttranslate()`
-- Do not create new files without asking first
+- Do not create new files without asking first.
+- read TODO.md to check what has been done and what's left to do.
+- ask for confirmation if one solution works. If yes, ask to update the md files.
 
 ### Vocabulary (FR → EN)
 
-| FR | EN |
-|----|----|
-| Flambeur | gambler |
-| Brute | brute |
-| Pirate | pirate |
-| Manche | round |
-| Tour | turn |
-| Bronze / Argent / Or | bronze / silver / gold |
-| Gemme | gem |
-| Chargée / Déchargée | charged / uncharged |
-| Trait | trait |
-| Arcane / Impact / Maîtrise | arcane / impact / mastery |
-| Force | strength |
-| Marqueur Rage | rage marker |
-| Frontière (gauche/droite) | border (left/right) |
-| Centre / Influence | center / influence |
-| Grille | grid |
-| Emplacement | position |
+| FR                              | EN                                |
+| ------------------------------- | --------------------------------- |
+| Flambeur                        | gambler                           |
+| Brute                           | brute                             |
+| Pirate                          | pirate                            |
+| Manche                          | round                             |
+| Tour                            | turn                              |
+| Bronze / Argent / Or            | bronze / silver / gold            |
+| Gemme                           | gem                               |
+| Chargée / Déchargée             | charged / uncharged               |
+| Trait                           | trait                             |
+| Arcane / Impact / Maîtrise      | arcane / impact / mastery         |
+| Force                           | strength                          |
+| Marqueur Rage                   | rage marker                       |
+| Frontière (gauche/droite)       | border (left/right)               |
+| Centre / Influence              | center / influence                |
+| Grille                          | grid                              |
+| Emplacement                     | position                          |
 | Emplacement suivant / précédent | next position / previous position |
-| Jeton Flambeur | gambler token |
-| Jeton Or Pirate | pirate gold token |
-| Chaudron (Mages) | cauldron |
-| Piste de Gloire (Champions) | glory track |
+| Jeton Flambeur                  | gambler token                     |
+| Jeton Or Pirate                 | pirate gold token                 |
+| Chaudron (Mages)                | cauldron                          |
+| Piste de Gloire (Champions)     | glory track                       |
 
 ---
 
 ## Critical rules (never violate)
 
 **Card visibility:**
+
 ```js
 isCardVisible: (card) => !!card.type,
 ```
+
 Never include `card_type` / `card_type_arg` in `notify->all()` for a face-down card.
 For upgrade draw (3 options): always `notify->player()` — never visible to others.
 
@@ -77,12 +85,14 @@ For upgrade draw (3 options): always `notify->player()` — never visible to oth
 `grid_position = 255` is reserved for out-of-grid containers (Mages cauldron — future expansion).
 
 **Grid positions (1-indexed columns and rows):**
+
 ```
 col:  1 (left border)   2 (center)   3 (right border)
 row3:       6                7               8
 row2:       3                4               5
 row1:       0                1               2
 ```
+
 Formula: `(row - 1) * 3 + (col - 1)` → 0–8.
 Next position = `grid_position + 3` (invalid at row 3 → no effect).
 Previous position = `grid_position - 3` (invalid at row 1 → no effect).
@@ -101,20 +111,20 @@ const BgaCards = await importEsmLib("bga-cards", "1.x");
 
 ## Common pitfalls
 
-| Pitfall | Fix |
-|---------|-----|
-| `addCards()` async not awaited → `setSelectableCards` too early | `async _initStocks()` or `setTimeout` |
-| PHP data as object in JS | `Object.values(gamedatas.xxx)` |
-| `card.type` as string → wrong sort | `parseInt(card.type)` on receipt |
-| Mixed px/% in sprites | Same unit throughout |
-| CSS ID selector on animated element | Class selectors only |
-| `drop-shadow` + Safari → slow | `html.dj_safari .el { filter: none; }` |
-| Face-down card: `type` sent by mistake | Never include `type` in `notify->all()` for hidden card |
-| `self::` on instance method (PHP 8.4) | Use `$this->` everywhere (`self::CONST` for constants is fine) |
-| `${var}` in PHP string (PHP 8.4) | Use `{$var}` instead |
-| `implode(array, separator)` (PHP 8.4) | `implode(separator, array)` |
-| `gamedatas.hand` used after initial load | `gamedatas` is a **stale page-load snapshot** — never fall back to it for hand cards on turn 2+. Always use `args.hand` (live state args) or wait for `notif_handDealt` (the authoritative path from `Deploy::onEnteringState`). |
-| BgaCards `[data-slot-id="N"]` vs `.slot-N` | BgaCards creates `data-slot-id="N"` attribute, NOT `.slot-N` class. Use attribute selectors: `.bc-grid [data-slot-id="0"] { ... }` |
+| Pitfall                                                         | Fix                                                                                                                                                                                                                              |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `addCards()` async not awaited → `setSelectableCards` too early | `async _initStocks()` or `setTimeout`                                                                                                                                                                                            |
+| PHP data as object in JS                                        | `Object.values(gamedatas.xxx)`                                                                                                                                                                                                   |
+| `card.type` as string → wrong sort                              | `parseInt(card.type)` on receipt                                                                                                                                                                                                 |
+| Mixed px/% in sprites                                           | Same unit throughout                                                                                                                                                                                                             |
+| CSS ID selector on animated element                             | Class selectors only                                                                                                                                                                                                             |
+| `drop-shadow` + Safari → slow                                   | `html.dj_safari .el { filter: none; }`                                                                                                                                                                                           |
+| Face-down card: `type` sent by mistake                          | Never include `type` in `notify->all()` for hidden card                                                                                                                                                                          |
+| `self::` on instance method (PHP 8.4)                           | Use `$this->` everywhere (`self::CONST` for constants is fine)                                                                                                                                                                   |
+| `${var}` in PHP string (PHP 8.4)                                | Use `{$var}` instead                                                                                                                                                                                                             |
+| `implode(array, separator)` (PHP 8.4)                           | `implode(separator, array)`                                                                                                                                                                                                      |
+| `gamedatas.hand` used after initial load                        | `gamedatas` is a **stale page-load snapshot** — never fall back to it for hand cards on turn 2+. Always use `args.hand` (live state args) or wait for `notif_handDealt` (the authoritative path from `Deploy::onEnteringState`). |
+| BgaCards `[data-slot-id="N"]` vs `.slot-N`                      | BgaCards creates `data-slot-id="N"` attribute, NOT `.slot-N` class. Use attribute selectors: `.bc-grid [data-slot-id="0"] { ... }`                                                                                               |
 
 ---
 
@@ -133,11 +143,13 @@ grep -rn "class.*extends GameState" app/modules/php/States/          # list stat
 ## References
 
 ### BGA Libraries
+
 - BgaCards API: https://x.boardgamearena.net/data/game-libs/bga-cards/1.x/docs/index.html
 - BgaAnimations API: https://x.boardgamearena.net/data/game-libs/bga-animations/1.x/docs/index.html
 - BgaCards demo: https://x.boardgamearena.net/data/game-libs/bga-cards/1.x/demo/index.html
 
 ### BGA Documentation
+
 - Game.js: https://en.doc.boardgamearena.com/Game_interface_logic:_Game.js
 - Game.php: https://en.doc.boardgamearena.com/Main_game_logic:_Game.php
 - Game.php Actions (autowired): https://en.doc.boardgamearena.com/Main_game_logic:_Game.php#Actions_(autowired)

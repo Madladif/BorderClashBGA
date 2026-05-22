@@ -14,7 +14,12 @@ class Deploy extends GameState
 {
     public function __construct(protected Game $game)
     {
-        parent::__construct($game, id: 10, type: StateType::MULTIPLE_ACTIVE_PLAYER);
+        parent::__construct($game,
+            id: 10,
+            type: StateType::MULTIPLE_ACTIVE_PLAYER,
+            description: clienttranslate('${actplayer} must deploy 3 cards'),
+            descriptionMyTurn: clienttranslate('${you} must deploy 3 cards'),
+        );
     }
 
     // Draw 3 cards from each player's deck to their hand when the state is entered.
@@ -89,11 +94,12 @@ class Deploy extends GameState
         }
 
         $deck = $this->game->getCollectionFromDb(
-            "SELECT card_id FROM bc_card
+            "SELECT card_id AS id, card_family AS family FROM bc_card
              WHERE card_location = 'bot_deck'
              ORDER BY RAND()"
         );
-        $cardIds = array_map('intval', array_keys($deck));
+        $cardIds  = array_map('intval', array_keys($deck));
+        $botFamily = (int)(reset($deck)['family'] ?? 0);
         $total   = count($cardIds);
 
         // Distribute up to 3 cards per column (bot deck may be < 6 after upgrades)
@@ -120,7 +126,7 @@ class Deploy extends GameState
         $this->game->bga->notify->all(
             'botCardsDeployed',
             clienttranslate('The bot deploys its cards'),
-            ['left_count' => $leftCount, 'right_count' => $rightCount]
+            ['left_count' => $leftCount, 'right_count' => $rightCount, 'family' => $botFamily]
         );
     }
 
@@ -184,13 +190,17 @@ class Deploy extends GameState
             );
         }
 
+        $famRows = $this->game->getCollectionFromDb(
+            "SELECT card_id AS id, card_family AS family FROM bc_card
+             WHERE card_id IN ({$col1CardId},{$col2CardId},{$col3CardId})"
+        );
         $this->game->bga->notify->all('cardsDeployed', clienttranslate('${player_name} deploys 3 cards'), [
             'player_id'   => $pid,
             'player_name' => $this->game->getPlayerNameById($pid),
             'cards'       => [
-                ['id' => $col1CardId, 'position' => $row * 3 + 0],
-                ['id' => $col2CardId, 'position' => $row * 3 + 1],
-                ['id' => $col3CardId, 'position' => $row * 3 + 2],
+                ['id' => $col1CardId, 'position' => $row * 3 + 0, 'family' => (int)($famRows[$col1CardId]['family'] ?? 0)],
+                ['id' => $col2CardId, 'position' => $row * 3 + 1, 'family' => (int)($famRows[$col2CardId]['family'] ?? 0)],
+                ['id' => $col3CardId, 'position' => $row * 3 + 2, 'family' => (int)($famRows[$col3CardId]['family'] ?? 0)],
             ],
         ]);
 
@@ -297,13 +307,17 @@ class Deploy extends GameState
             );
         }
 
+        $zombFamRows = $this->game->getCollectionFromDb(
+            "SELECT card_id AS id, card_family AS family FROM bc_card
+             WHERE card_id IN (" . implode(',', $cardIds) . ")"
+        );
         $this->game->bga->notify->all('cardsDeployed', clienttranslate('${player_name} deploys 3 cards'), [
             'player_id'   => $pid,
             'player_name' => $this->game->getPlayerNameById($pid),
             'cards'       => [
-                ['id' => $cardIds[0], 'position' => $row * 3 + 0],
-                ['id' => $cardIds[1], 'position' => $row * 3 + 1],
-                ['id' => $cardIds[2], 'position' => $row * 3 + 2],
+                ['id' => $cardIds[0], 'position' => $row * 3 + 0, 'family' => (int)($zombFamRows[$cardIds[0]]['family'] ?? 0)],
+                ['id' => $cardIds[1], 'position' => $row * 3 + 1, 'family' => (int)($zombFamRows[$cardIds[1]]['family'] ?? 0)],
+                ['id' => $cardIds[2], 'position' => $row * 3 + 2, 'family' => (int)($zombFamRows[$cardIds[2]]['family'] ?? 0)],
             ],
         ]);
 

@@ -71,6 +71,7 @@
   grid-template-columns: repeat(3, 173px);
   grid-template-rows: repeat(3, 125px);
   gap: 4px;
+  pointer-events: auto; /* ensure clicks are not blocked by bga-cards */
 }
 
 /* Row 0 (turn 1) at bottom (grid-row 3), row 2 (turn 3) at top (grid-row 1).
@@ -123,6 +124,7 @@
   justify-content: center;
   position: relative;
   overflow: hidden;
+  pointer-events: auto; /* override any bga-cards pointer-events:none on slot divs */
 }
 
 /* Column styling by slot index (col = pos % 3) — use data-slot-id attribute selectors */
@@ -151,6 +153,34 @@
 .bc-cell-left,
 .bc-cell-right {
   background: #f5f0e8;
+}
+
+/* ============================================================
+   Grid column header — first-player indicator above column 3
+   ============================================================ */
+
+.bc-grid-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.bc-col-header {
+  display: grid;
+  grid-template-columns: 173px 173px 173px;
+  gap: 4px;
+  height: 20px;
+  margin-bottom: 2px;
+}
+
+.bc-col-h {
+  text-align: center;
+  line-height: 20px;
+}
+
+.bc-col-fp-marker {
+  color: #f1c40f;
+  font-size: 16px;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
 }
 
 /* ============================================================
@@ -339,6 +369,15 @@
   transform: translateY(-4px) !important;
 }
 
+/* Grid cards are never interactive — override any leaked bc-hand-card */
+.bc-cell .bc-card {
+  cursor: default;
+}
+.bc-cell .bc-card:hover {
+  box-shadow: none;
+  transform: none;
+}
+
 /* ============================================================
    Draft deck fan (SilverDraft — shows cards already in deck)
    ============================================================ */
@@ -416,6 +455,17 @@
 /* Mulligan mode: hand cards pulse to signal selection */
 #bc-deploy-ui.bc-mulligan-mode .bc-hand-card {
   box-shadow: 0 0 0 2px #e67e22;
+}
+
+/* Deploy phase — empty grid cells on the active row are clickable */
+.bc-cell.bc-deploy-cell-active {
+  cursor: pointer !important;
+  border: 2px dashed #27ae60 !important;
+  background: rgba(39, 174, 96, 0.06) !important;
+  pointer-events: auto !important;
+}
+.bc-cell.bc-deploy-cell-active:hover {
+  background: rgba(39, 174, 96, 0.16) !important;
 }
 
 /* ============================================================
@@ -506,18 +556,161 @@
   box-shadow: 0 0 0 3px #27ae60 !important;
 }
 
+/* Upgrade phase — interactive center grid cards (override default bc-cell no-interaction) */
+.bc-cell .bc-card.bc-upgrade-selectable {
+  cursor: pointer !important;
+  transition: box-shadow 0.1s, transform 0.1s !important;
+}
+
+.bc-cell .bc-card.bc-upgrade-selectable:hover {
+  box-shadow: 0 0 0 2px #e67e22 !important;
+  transform: translateY(-2px) !important;
+}
+
+.bc-cell .bc-card.bc-upgrade-selected {
+  box-shadow: 0 0 0 3px #27ae60 !important;
+  transform: translateY(-4px) !important;
+}
+
+.bc-cell .bc-card.bc-upgrade-chosen {
+  outline: 2px solid #2980b9;
+  cursor: default !important;
+}
+
 /* ============================================================
-   Gem display (inside player boards)
+   UpgradeCards state UI — pick replacement cards
    ============================================================ */
 
-.bc-player-info {
+#bc-upgrade-cards-ui {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: #f0f0ff;
+  border: 1px solid #99a;
+  border-radius: 8px;
+}
+
+#bc-upgrade-cards-ui > p {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #444;
+}
+
+.bc-upgrade-cards-slot {
+  margin-bottom: 18px;
+}
+
+.bc-upgrade-cards-slot:last-child {
+  margin-bottom: 0;
+}
+
+.bc-upgrade-cards-label {
+  font-size: 11px;
+  color: #666;
+  margin: 0 0 8px;
+}
+
+.bc-upgrade-cards-options {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Opts panels injected directly into the hand area — take full width so they start on their own row */
+.bc-hand-area .bc-upgrade-opts-panel {
+  flex: 0 0 100%;
+}
+
+
+/* ============================================================
+   Gems zone — 3 gem icons between grid and hand row
+   gems.png: 1200×600 — 4 cols × 2 rows (300×300 native) displayed at 48×48 (scale 0.16)
+   background-size: 192×96. col = family-1 (0-based), row: charged=0, uncharged=-48px
+   ============================================================ */
+
+.bc-gems-zone {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0;
+  perspective: 200px; /* enables 3D depth for gem flip animation */
+}
+
+.bc-gem {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  background-image: url("img/gems.png");
+  background-size: 192px 96px;
+  background-repeat: no-repeat;
+  background-position: -144px 0; /* default: col 4 (yellow), charged */
+}
+
+/* Column (color) determined by BGA player color mapped to gem column index */
+.bc-gems-zone[data-gem-col="0"] .bc-gem { background-position-x:    0px; } /* red   */
+.bc-gems-zone[data-gem-col="1"] .bc-gem { background-position-x:  -48px; } /* green */
+.bc-gems-zone[data-gem-col="2"] .bc-gem { background-position-x:  -96px; } /* blue  */
+.bc-gems-zone[data-gem-col="3"] .bc-gem { background-position-x: -144px; } /* yellow */
+
+/* Uncharged gems use row 2 (gray) */
+.bc-gem[data-state="uncharged"] { background-position-y: -48px; }
+
+/* ============================================================
+   Components row — wraps gems zone + class-specific components side by side
+   ============================================================ */
+
+.bc-components-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.bc-class-components {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-  padding-top: 4px;
-  border-top: 1px solid #eee;
-  color: #444;
+  padding: 4px 0;
+}
+
+.bc-dice-area {
+  width: 60px;
+  height: 60px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Hand row — wraps hand area
+   ============================================================ */
+
+.bc-hand-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.bc-hand-row .bc-hand-area {
+  width: 527px; /* matches grid width: 3 × 173px + 2 × 4px gap */
+  flex: none;
+}
+
+/* ============================================================
+   Rage marker — components_scoundrels.png col 11, 12 cols × 2 rows (300×300 native)
+   displayed at 60×60 (scale 0.2 → background-size 720×120)
+   data-rage="enraged" = row 1 (y=0), data-rage="calm" = row 2 (y=-60px)
+   ============================================================ */
+
+.bc-rage-marker {
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+  background-image: url("img/components_scoundrels.png");
+  background-size: 720px 120px;
+  background-repeat: no-repeat;
+  background-position: -600px 0;
+}
+
+.bc-rage-marker[data-rage="calm"] {
+  background-position: -600px -60px;
 }
 
 /* ============================================================
@@ -529,6 +722,29 @@
   margin-left: 5px;
   color: #f1c40f;
   font-size: 13px;
+}
+
+/* ============================================================
+   Token icons — gambler (cols 7-10) and pirate_gold (col 12)
+   components_scoundrels.png: 12 cols × 2 rows, 300×300 native
+   displayed at 36×36 (scale 0.12 → background-size 432×72)
+   Row 1 (y=0) = green face (positive/recto)
+   Row 2 (y=-36px) = red face (negative/verso)
+   ============================================================ */
+
+.bc-token {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 60px;
+  height: 60px;
+  background-image: url("img/components_scoundrels.png");
+  background-size: 720px 120px;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  z-index: 8;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
 /* ============================================================
@@ -598,6 +814,40 @@
     transform: translate(-50%, -50%) scale(1);
     opacity: 1;
   }
+}
+
+/* Dice animation overlay — shown on center card before the effect badge
+   components_scoundrels.png cols 1-6 = dice faces, row 1 (y=0)
+   displayed at 60×60 (scale 0.2 → background-size 720×120) */
+.bc-dice-anim {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60px;
+  height: 60px;
+  background-image: url("img/components_scoundrels.png");
+  background-size: 720px 120px;
+  background-repeat: no-repeat;
+  background-position-y: 0;
+  background-position-x: 0;
+  border-radius: 8px;
+  z-index: 15;
+  pointer-events: none;
+}
+
+/* Card activation jiggle — fired after face-up reveal */
+@keyframes bc-card-activate {
+  0%   { transform: translateX(0)    rotate(0deg);   }
+  20%  { transform: translateX(-6px) rotate(-2deg);  }
+  45%  { transform: translateX(6px)  rotate(2deg);   }
+  65%  { transform: translateX(-4px) rotate(-1deg);  }
+  82%  { transform: translateX(3px)  rotate(1deg);   }
+  100% { transform: translateX(0)    rotate(0deg);   }
+}
+
+.bc-card-activating {
+  animation: bc-card-activate 0.3s ease-in-out;
 }
 
 /* Influence effect badge shown on the center card */
