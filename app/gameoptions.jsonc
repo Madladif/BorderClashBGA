@@ -4,9 +4,10 @@
     "name": "Bot difficulty",
     "values": {
       "0": { "name": "Easy",    "description": "Bot: 6 Bronze cards" },
-      "1": { "name": "Medium",  "description": "Bot: 4 Bronze + 2 Silver cards" },
-      "2": { "name": "Hard",    "description": "Bot: 2 Bronze + 4 Silver cards" },
-      "3": { "name": "Extreme", "description": "Bot: 6 Silver cards" }
+      "1": { "name": "Medium",  "description": "Bot: 5 Bronze + 1 Silver card" },
+      "2": { "name": "Hard",    "description": "Bot: 4 Bronze + 2 Silver cards" },
+      "3": { "name": "Extreme", "description": "Bot: 3 Bronze + 3 Silver cards" },
+      "4": { "name": "Insane",  "description": "Bot: 2 Bronze + 4 Silver cards" }
     },
     "default": 0,
     "displaycondition": [{ "type": "maxplayers", "value": 1 }]

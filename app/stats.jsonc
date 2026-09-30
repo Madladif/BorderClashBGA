@@ -10,6 +10,56 @@
             "id": 11,
             "name": "Total turns played",
             "type": "int"
+        },
+        "cards_gold_total": {
+            "id": 12,
+            "name": "Gold cards (all players, at game end)",
+            "type": "int"
+        },
+        "cards_silver_total": {
+            "id": 13,
+            "name": "Silver cards (all players, at game end)",
+            "type": "int"
+        },
+        "cards_bronze_total": {
+            "id": 14,
+            "name": "Bronze cards (all players, at game end)",
+            "type": "int"
+        },
+        "score_max": {
+            "id": 15,
+            "name": "Highest final score",
+            "type": "int"
+        },
+        "score_min": {
+            "id": 16,
+            "name": "Lowest final score",
+            "type": "int"
+        },
+        "gems_spent_total": {
+            "id": 17,
+            "name": "Gems spent (upgrade or mulligan, all players)",
+            "type": "int"
+        },
+        "mulligans_total": {
+            "id": 18,
+            "name": "Mulligans used (all players)",
+            "type": "int"
+        },
+        "points_gambler": {
+            "id": 19,
+            "name": "VP from Gambler card effects (all players)",
+            "type": "int"
+        },
+        "points_brute": {
+            "id": 20,
+            "name": "VP from Brute card effects (all players)",
+            "type": "int"
+        },
+        "points_pirate": {
+            "id": 21,
+            "name": "VP from Pirate card effects (all players)",
+            "type": "int"
         }
     },
 
@@ -53,6 +103,41 @@
         "gems_charged_at_end": {
             "id": 27,
             "name": "Charged gems at end of game",
+            "type": "int"
+        },
+        "cards_gold": {
+            "id": 28,
+            "name": "Gold cards (at game end)",
+            "type": "int"
+        },
+        "cards_silver": {
+            "id": 29,
+            "name": "Silver cards (at game end)",
+            "type": "int"
+        },
+        "cards_bronze": {
+            "id": 30,
+            "name": "Bronze cards (at game end)",
+            "type": "int"
+        },
+        "power_max": {
+            "id": 31,
+            "name": "Highest power reached",
+            "type": "int"
+        },
+        "faction_gambler_cards": {
+            "id": 32,
+            "name": "Gambler cards (at game end)",
+            "type": "int"
+        },
+        "faction_brute_cards": {
+            "id": 33,
+            "name": "Brute cards (at game end)",
+            "type": "int"
+        },
+        "faction_pirate_cards": {
+            "id": 34,
+            "name": "Pirate cards (at game end)",
             "type": "int"
         }
     }

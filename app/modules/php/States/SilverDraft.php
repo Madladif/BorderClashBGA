@@ -85,7 +85,7 @@ class SilverDraft extends GameState
         $draftCardIds = array_map('intval', array_keys($draftRows));
 
         if (!in_array($keptCardId, $draftCardIds, true)) {
-            throw new UserException("This card is not in your draft");
+            throw new UserException(clienttranslate("This card is not in your draft"));
         }
 
         // Keep: move to personal deck

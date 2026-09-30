@@ -53,6 +53,8 @@ class Deploy extends GameState
                          WHERE card_id IN ({$cardIds})"
                     );
                 }
+                // Fresh hand for the round — reset this player's mulligan history (see actMulligan).
+                $this->game->bga->globals->set("mulligan_returned_{$pid}", []);
             }
 
             // Private: push hand + deck count directly to each player.
@@ -161,7 +163,7 @@ class Deploy extends GameState
         $row        = $turnNumber - 1; // row 0 = turn 1, row 1 = turn 2, row 2 = turn 3
 
         if (count(array_unique([$col1CardId, $col2CardId, $col3CardId])) !== 3) {
-            throw new UserException("All three cards must be different");
+            throw new UserException(clienttranslate("All three cards must be different"));
         }
 
         $gridLocation = "grid_{$pid}";
@@ -215,8 +217,14 @@ class Deploy extends GameState
     {
         $pid = (int)$this->game->getCurrentPlayerId();
 
+        // R-5.3 (arbitrage): second chance is forbidden on turn 3
+        $turnNumber = (int)($this->game->bga->globals->get('turn_number') ?? 1);
+        if ($turnNumber >= 3) {
+            throw new UserException(clienttranslate("Second chance is not allowed on the last turn of the round"));
+        }
+
         if ($this->game->gemsCharged->get($pid) <= 0) {
-            throw new UserException("No charged gems available for mulligan");
+            throw new UserException(clienttranslate("No charged gems available for mulligan"));
         }
 
         $check = $this->game->getObjectFromDB(
@@ -233,6 +241,8 @@ class Deploy extends GameState
         $this->game->gemsCharged->inc($pid, -1, null);
         $this->game->gemsUncharged->inc($pid, 1, null);
         $this->game->bga->playerStats->inc('mulligans_used', 1, $pid);
+        $this->game->bga->tableStats->inc('mulligans_total', 1);
+        $this->game->bga->tableStats->inc('gems_spent_total', 1);
 
         // Return card to deck
         $this->game->DbQuery(
@@ -240,13 +250,42 @@ class Deploy extends GameState
              WHERE card_id = {$cardId}"
         );
 
-        // Draw 1 new card from deck (may draw the same card back if deck had only 1 card)
+        // Draw 1 new card from deck — excludes every card this player has mulliganed away
+        // THIS round (not just the current one), so a second mulligan can't hand back a card
+        // returned by an earlier one either. A single-card exclusion was fixed at (38), but a
+        // player mulliganing a second time (any hand card, not necessarily the same slot)
+        // could still draw back whatever their FIRST mulligan had returned to the deck, since
+        // that card was never excluded once the current invocation moved past it.
+        $returned   = (array)($this->game->bga->globals->get("mulligan_returned_{$pid}") ?? []);
+        $returned[] = $cardId;
+        $excludeIds = implode(',', array_map('intval', array_unique($returned)));
+
         $newCard = $this->game->getObjectFromDB(
             "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
              FROM bc_card
-             WHERE card_location = 'deck' AND card_location_arg = {$pid}
+             WHERE card_location = 'deck' AND card_location_arg = {$pid} AND card_id NOT IN ({$excludeIds})
              ORDER BY RAND() LIMIT 1"
         );
+        if (!$newCard) {
+            // Fall back progressively: excluding only the current card, then no exclusion at
+            // all — only reached once the deck is small enough that every remaining card has
+            // already been mulliganed away this round (nothing else left to draw).
+            $newCard = $this->game->getObjectFromDB(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+                 FROM bc_card
+                 WHERE card_location = 'deck' AND card_location_arg = {$pid} AND card_id != {$cardId}
+                 ORDER BY RAND() LIMIT 1"
+            );
+        }
+        if (!$newCard) {
+            $newCard = $this->game->getObjectFromDB(
+                "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg, card_family AS family
+                 FROM bc_card
+                 WHERE card_location = 'deck' AND card_location_arg = {$pid}
+                 ORDER BY RAND() LIMIT 1"
+            );
+        }
+        $this->game->bga->globals->set("mulligan_returned_{$pid}", $returned);
         if ($newCard) {
             $this->game->DbQuery(
                 "UPDATE bc_card SET card_location = 'hand'

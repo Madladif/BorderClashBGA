@@ -230,15 +230,30 @@ class Game extends \Bga\GameFramework\Table
             $result['personal_deck_sizes'][(int)$key] = (int)$row['cnt'];
         }
 
-        // Active player tokens (gambler + pirate_gold) — always visible to all
+        // Active player tokens (gambler + pirate_gold) — always visible to all.
+        // getCollectionFromDb() keys its result array by the first selected column by default —
+        // with player_id first, any player holding 2+ tokens at once (e.g. Navigator's "gold
+        // token on both borders") had every row but the last silently collide/overwrite on that
+        // same key, so array_values() below could only ever return one of them. This never
+        // showed up live (the client tracks tokens by DOM element, not by this array) — only on
+        // a full reload (F5/getAllDatas), which rebuilds everything from this array and so lost
+        // whichever token(s) got overwritten. bc_token's own unique `id` column selected first
+        // instead guarantees no two rows can ever share a key.
         $result['tokens'] = array_values($this->getCollectionFromDb(
-            "SELECT player_id, grid_position, token_type, value FROM bc_token WHERE player_id != 0"
+            "SELECT id, player_id, grid_position, token_type, value FROM bc_token WHERE player_id != 0"
         ));
 
-        // Round / turn / turn-order globals
+        // Effect-resolution badges from this round so far (persist through the round,
+        // cleared at Upgrade entry) — lets a page reload restore them (see Upgrade::onEnteringState).
+        $result['effect_badges'] = array_values($this->bga->globals->get('effect_badges') ?? []);
+
+        // Gauge strength-gap history from this round so far (one combatResolved payload per
+        // resolved border) — same reload-restore pattern, also cleared at Upgrade entry.
+        $result['gauge_diff_history'] = array_values($this->bga->globals->get('gauge_diff_history') ?? []);
+
+        // Round / turn globals. player_order: fixed seat adjacency only (R-4.4) — no turn priority, never rotates.
         $result['round_number']        = (int)($this->bga->globals->get('round_number')        ?? 1);
         $result['turn_number']         = (int)($this->bga->globals->get('turn_number')         ?? 1);
-        $result['turn_order_start_id'] = (int)($this->bga->globals->get('turn_order_start_id') ?? 0);
         $result['player_order']        = $this->bga->globals->get('player_order') ?? [];
         $result['current_player_id']   = $pid;
 
@@ -262,7 +277,7 @@ class Game extends \Bga\GameFramework\Table
         $defaultColors = $gameinfos['player_colors'];
         $queryValues   = [];
         foreach ($players as $playerId => $player) {
-            $queryValues[] = vsprintf("(%s, '%s', '%s')", [
+            $queryValues[] = vsprintf(clienttranslate("(%s, '%s', '%s')"), [
                 $playerId,
                 array_shift($defaultColors),
                 addslashes($player['player_name']),
@@ -276,7 +291,12 @@ class Game extends \Bga\GameFramework\Table
         $this->reattributeColorsBasedOnPreferences($players, $gameinfos['player_colors']);
         $this->reloadPlayersBasicInfos();
 
-        // Create all 78 cards in their shared piles
+        // R-3.6: every player starts with their Rage marker on Enraged (player_rage = 1)
+        static::DbQuery(
+            "UPDATE `player` SET `player_rage` = 1 WHERE `player_id` IN (" . implode(',', array_map('intval', array_keys($players))) . ")"
+        );
+
+        // Create all 87 cards in their shared piles
         $this->createAllCards();
 
         // Give each player 1 copy of every Bronze design (6 cards each)
@@ -296,28 +316,15 @@ class Game extends \Bga\GameFramework\Table
             $this->dealInitialDraftCards($players);
         }
 
-        // Pick first player randomly and build anticlockwise play order
-        $playerIds    = array_keys($players);
-        $firstId      = (int)$playerIds[array_rand($playerIds)];
-
-        // getCollectionFromDb keyed by player_id, but ORDER BY player_no preserved in PHP array
+        // R-4.4: no turn order, no first player — player_order is just seat adjacency
+        // (who is left/right neighbor), fixed for the whole game, never rotated.
         $playersInfo  = $this->getCollectionFromDb(
             "SELECT player_id, player_no FROM player ORDER BY player_no ASC"
         );
-        $orderedPids  = array_map('intval', array_keys($playersInfo));
-        $firstIdx     = array_search($firstId, $orderedPids, true);
-        if ($firstIdx === false) {
-            $firstIdx = 0;
-        }
-        $count        = count($orderedPids);
-        $playerOrder  = [];
-        for ($i = 0; $i < $count; $i++) {
-            $playerOrder[] = $orderedPids[($firstIdx + $i) % $count];
-        }
+        $playerOrder  = array_map('intval', array_keys($playersInfo));
 
         $this->bga->globals->set('round_number',        1);
         $this->bga->globals->set('turn_number',         1);
-        $this->bga->globals->set('turn_order_start_id', $firstId);
         $this->bga->globals->set('player_order',        $playerOrder);
         $this->bga->globals->set('current_combat_idx',  0);
         $this->bga->globals->set('is_solo',             $isSolo ? 1 : 0);
@@ -325,15 +332,15 @@ class Game extends \Bga\GameFramework\Table
         if ($isSolo) {
             $this->bga->globals->set('bot_score',      0);
             $this->bga->globals->set('bot_difficulty', $difficulty);
-            $this->bga->globals->set('bot_rage',       0);
+            $this->bga->globals->set('bot_rage',       1); // R-3.6/R-10.1: Automa also starts Enraged
         }
 
         // Both solo and multiplayer start with SilverDraftNext → SilverDraft
         return SilverDraftNext::class;
         } catch (\Throwable $t) {
             throw new \Exception(
-                'Setup failed: ' . $t->getMessage()
-                . ' in ' . $t->getFile() . ':' . $t->getLine(),
+                clienttranslate('Setup failed: ') . $t->getMessage()
+                . clienttranslate(' in ') . $t->getFile() . ':' . $t->getLine(),
                 0, $t
             );
         }
@@ -351,31 +358,23 @@ class Game extends \Bga\GameFramework\Table
     // Private helpers — card setup
     // -------------------------------------------------------------------------
 
+    // R-1.1: 24 Bronze (6 designs x 4 colors), 36 Silver (18 designs x 2), 27 Gold (9 designs x 3).
+    // Family is read from CardEffects (data-driven from docs/cartes.csv, R-8.1) — no formula.
     private function createAllCards(): void
     {
         $values = [];
 
-        // Bronze: 6 designs × 4 copies. Family: designs 1-2=Gambler, 3-4=Brute, 5-6=Pirate
-        for ($design = 1; $design <= 6; $design++) {
-            $family = (int)ceil($design / 2);
-            for ($copy = 0; $copy < 4; $copy++) {
-                $values[] = "(1, {$design}, {$family}, 'shared_bronze', 0, 0)";
-            }
-        }
-
-        // Silver: 18 designs × 2 copies. Family: designs 1-6=Gambler, 7-12=Brute, 13-18=Pirate
-        for ($design = 1; $design <= 18; $design++) {
-            $family = (int)ceil($design / 6);
-            for ($copy = 0; $copy < 2; $copy++) {
-                $values[] = "(2, {$design}, {$family}, 'shared_silver', 0, 0)";
-            }
-        }
-
-        // Gold: 9 designs × 2 copies. Family: designs 1-3=Gambler, 4-6=Brute, 7-9=Pirate
-        for ($design = 1; $design <= 9; $design++) {
-            $family = (int)ceil($design / 3);
-            for ($copy = 0; $copy < 2; $copy++) {
-                $values[] = "(3, {$design}, {$family}, 'shared_gold', 0, 0)";
+        foreach ([1 => [6, 4], 2 => [18, 2], 3 => [9, 3]] as $rank => [$designCount, $copies]) {
+            $location = match ($rank) {
+                Game::RANK_BRONZE => 'shared_bronze',
+                Game::RANK_SILVER => 'shared_silver',
+                Game::RANK_GOLD   => 'shared_gold',
+            };
+            for ($design = 1; $design <= $designCount; $design++) {
+                $family = CardEffects::getFamily($rank, $design);
+                for ($copy = 0; $copy < $copies; $copy++) {
+                    $values[] = "({$rank}, {$design}, {$family}, '{$location}', 0, 0)";
+                }
             }
         }
 
@@ -418,7 +417,7 @@ class Game extends \Bga\GameFramework\Table
              ORDER BY RAND() LIMIT 5"
         );
         if (count($drawn) < 5) {
-            throw new \RuntimeException("Not enough Silver cards for solo player draft");
+            throw new \RuntimeException(clienttranslate("Not enough Silver cards for solo player draft"));
         }
         $ids = implode(',', array_map('intval', array_keys($drawn)));
         static::DbQuery(
@@ -427,10 +426,12 @@ class Game extends \Bga\GameFramework\Table
         );
     }
 
+    // R-10.2: 0=Easy(6B/0S) 1=Medium(5B/1S) 2=Hard(4B/2S) 3=Extreme(3B/3S) 4=Insane(2B/4S)
+    private const BOT_SILVER_BY_DIFFICULTY = [0 => 0, 1 => 1, 2 => 2, 3 => 3, 4 => 4];
+
     private function setupBot(int $difficulty): void
     {
-        // difficulty 0=6B, 1=4B+2S, 2=2B+4S, 3=6S
-        $silverCount = $difficulty * 2;
+        $silverCount = self::BOT_SILVER_BY_DIFFICULTY[$difficulty] ?? 0;
         $bronzeCount = 6 - $silverCount;
 
         // Give bot one copy of each Bronze design, shuffled, taking $bronzeCount
@@ -461,7 +462,7 @@ class Game extends \Bga\GameFramework\Table
                  ORDER BY RAND() LIMIT {$silverCount}"
             );
             if (count($rows) < $silverCount) {
-                throw new \RuntimeException("Not enough Silver cards for bot");
+                throw new \RuntimeException(clienttranslate("Not enough Silver cards for bot"));
             }
             $ids = implode(',', array_map('intval', array_keys($rows)));
             static::DbQuery(

@@ -50,7 +50,7 @@ class PlayerTurn extends GameState
         // check input values
         $playableCardsIds = $args['playableCardsIds'];
         if (!in_array($card_id, $playableCardsIds)) {
-            throw new UserException('Invalid card choice');
+            throw new UserException(clienttranslate('Invalid card choice'));
         }
 
         // Add your game logic to play a card here.

@@ -49,10 +49,64 @@ class UpgradePickReplacement extends GameState
         }
 
         return [
-            'orig_card_id' => $origCardId,
-            'position'     => $position,
-            'options'      => $options,
+            'orig_card_id'  => $origCardId,
+            'position'      => $position,
+            'options'       => $options,
+            'gems_charged'  => $this->game->gemsCharged->get($playerId),
         ];
+    }
+
+    // Discard the current 3 options back to their shared pile and draw 3 new ones from the
+    // same pile, for the cost of 1 charged gem. Stays in this state (getArgs() re-reads the
+    // refreshed option_ids, so the client just re-renders with the new notify payload).
+    #[PossibleAction]
+    public function actRerollOptions(): void
+    {
+        $pid = (int)$this->game->getCurrentPlayerId();
+
+        if ($this->game->gemsCharged->get($pid) <= 0) {
+            throw new UserException(clienttranslate("No charged gems available to reroll"));
+        }
+
+        $current    = (array)($this->game->bga->globals->get("upgrade_current_{$pid}") ?? []);
+        $origCardId = (int)($current['card_id'] ?? 0);
+        $optionIds  = array_map('intval', (array)($current['option_ids'] ?? []));
+        $origRank   = (int)($current['orig_rank'] ?? 0);
+
+        $this->game->gemsCharged->inc($pid, -1, null);
+        $this->game->gemsUncharged->inc($pid, 1, null);
+        $this->game->bga->tableStats->inc('gems_spent_total', 1);
+
+        $this->returnOptionsToPile($optionIds);
+
+        $nextPile = $origRank === Game::RANK_BRONZE ? 'shared_silver' : 'shared_gold';
+        $newRows  = $this->game->getCollectionFromDb(
+            "SELECT card_id FROM bc_card WHERE card_location = '{$nextPile}' ORDER BY RAND() LIMIT 3"
+        );
+        $newOptionIds = array_map('intval', array_keys($newRows));
+        if (!empty($newOptionIds)) {
+            $idsStr = implode(',', $newOptionIds);
+            $this->game->DbQuery(
+                "UPDATE bc_card SET card_location = 'upgrade_options', card_location_arg = {$pid}
+                 WHERE card_id IN ({$idsStr})"
+            );
+        }
+
+        $current['option_ids'] = $newOptionIds;
+        $this->game->bga->globals->set("upgrade_current_{$pid}", $current);
+
+        $allOptions   = (array)($this->game->bga->globals->get('upgrade_options') ?? []);
+        $myOptionsMap = (array)($allOptions[$pid] ?? []);
+        $myOptionsMap[$origCardId] = $newOptionIds;
+        $allOptions[$pid] = $myOptionsMap;
+        $this->game->bga->globals->set('upgrade_options', $allOptions);
+
+        $this->game->bga->notify->player($pid, 'upgradeOptionsRerolled', '', $this->getArgs($pid));
+        $this->game->bga->notify->all('gemUpdated', '', [
+            'player_id' => $pid,
+            'charged'   => $this->game->gemsCharged->get($pid),
+            'uncharged' => $this->game->gemsUncharged->get($pid),
+        ]);
     }
 
     // Player picks one replacement card. The chosen card is placed face-down in the grid slot.
@@ -66,16 +120,23 @@ class UpgradePickReplacement extends GameState
         $origCardId = (int)($current['card_id'] ?? 0);
         $position   = (int)($current['position'] ?? 0);
         $optionIds  = array_map('intval', (array)($current['option_ids'] ?? []));
+        $origRank   = (int)($current['orig_rank'] ?? 0);
 
         if (!in_array($chosenId, $optionIds, true)) {
-            throw new UserException("Chosen card is not a valid option");
+            throw new UserException(clienttranslate("Chosen card is not a valid option"));
         }
 
         $cardRow = $this->game->getObjectFromDB(
             "SELECT card_type AS type, card_family AS family FROM bc_card WHERE card_id = {$chosenId}"
         );
         if (!$cardRow) {
-            throw new UserException("Chosen card not found");
+            throw new UserException(clienttranslate("Chosen card not found"));
+        }
+
+        // Defense in depth: one rank at a time only (Bronze → Silver, Silver → Gold — never
+        // Bronze → Gold directly), regardless of what ended up in option_ids.
+        if ($origRank > 0 && (int)$cardRow['type'] !== $origRank + 1) {
+            throw new UserException(clienttranslate("Replacement card is not exactly one rank higher"));
         }
 
         // Place chosen replacement face-down at the original card's grid position

@@ -105,7 +105,7 @@ class UpgradeMain extends GameState
                AND card_face_up = 1"
         );
         if (!$card) {
-            throw new UserException("Invalid card for flip");
+            throw new UserException(clienttranslate("Invalid card for flip"));
         }
 
         // Flip face-down
@@ -156,7 +156,7 @@ class UpgradeMain extends GameState
         $pid = (int)$this->game->getCurrentPlayerId();
 
         if ($this->game->gemsCharged->get($pid) < 1) {
-            throw new UserException("No charged gems available");
+            throw new UserException(clienttranslate("No charged gems available"));
         }
 
         $card = $this->game->getObjectFromDB(
@@ -168,7 +168,7 @@ class UpgradeMain extends GameState
                AND card_face_up = 1"
         );
         if (!$card) {
-            throw new UserException("Invalid card for upgrade");
+            throw new UserException(clienttranslate("Invalid card for upgrade"));
         }
 
         // Validate options exist for this card
@@ -176,12 +176,13 @@ class UpgradeMain extends GameState
         $myOptionsMap = (array)($allOptions[$pid] ?? []);
         $optionIds    = array_map('intval', (array)($myOptionsMap[(string)$cardId] ?? $myOptionsMap[$cardId] ?? []));
         if (empty($optionIds)) {
-            throw new UserException("No upgrade options available for this card");
+            throw new UserException(clienttranslate("No upgrade options available for this card"));
         }
 
         // Discharge 1 gem
         $this->game->gemsCharged->inc($pid, -1, null);
         $this->game->gemsUncharged->inc($pid, 1, null);
+        $this->game->bga->tableStats->inc('gems_spent_total', 1);
 
         // Return card to its origin pile
         $originPile = match((int)$card['card_type']) {
@@ -195,11 +196,14 @@ class UpgradeMain extends GameState
              WHERE card_id = {$cardId}"
         );
 
-        // Store which card is being upgraded (so UpgradePickReplacement knows what slot to fill)
+        // Store which card is being upgraded (so UpgradePickReplacement knows what slot to fill).
+        // orig_rank lets it verify the chosen replacement is exactly one rank higher — Bronze
+        // must become Silver, never Gold directly (R-8: one rank at a time).
         $this->game->bga->globals->set("upgrade_current_{$pid}", [
-            'card_id'   => $cardId,
-            'position'  => (int)$card['position'],
+            'card_id'    => $cardId,
+            'position'   => (int)$card['position'],
             'option_ids' => $optionIds,
+            'orig_rank'  => (int)$card['card_type'],
         ]);
 
         // Notify: card flies out, gem discharged
@@ -237,7 +241,7 @@ class UpgradeMain extends GameState
         $cnt = (int)($remaining['cnt'] ?? 1);
         $this->game->bga->notify->all('debugLog', 'dbg', ['msg' => "checkDone cnt={$cnt}"]);
         if ($cnt === 0) {
-            $this->game->bga->notify->all('debugLog', 'dbg', ['msg' => "checkDone → finishPlayer"]);
+            $this->game->bga->notify->all('debugLog', 'dbg', ['msg' => clienttranslate("checkDone → finishPlayer")]);
             $this->finishPlayerPublic($pid);
         }
         // else: stay in UpgradeMain, waiting for more actFlipDown / actSpendGem

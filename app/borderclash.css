@@ -28,18 +28,6 @@
   align-items: flex-start;
 }
 
-#bc-shared-decks {
-  margin-top: 12px;
-  display: flex;
-  gap: 20px;
-  font-size: 12px;
-  color: #555;
-  padding: 6px 10px;
-  background: #f5f5f5;
-  border-radius: 4px;
-  width: fit-content;
-}
-
 /* ============================================================
    Player board
    ============================================================ */
@@ -52,6 +40,7 @@
   border-radius: 6px;
   padding: 8px;
   background: #fafafa;
+  box-sizing: border-box; /* so JS-applied width (_sizeGauges, opponent board matching) is the full outer width, not content-only */
 }
 
 .bc-player-label {
@@ -162,6 +151,7 @@
 .bc-grid-container {
   display: flex;
   flex-direction: column;
+  align-items: center; /* centers the grid when the board is stretched to match my (wider) board — see _sizeGauges() */
 }
 
 .bc-col-header {
@@ -175,12 +165,6 @@
 .bc-col-h {
   text-align: center;
   line-height: 20px;
-}
-
-.bc-col-fp-marker {
-  color: #f1c40f;
-  font-size: 16px;
-  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
 }
 
 /* ============================================================
@@ -221,6 +205,114 @@
 }
 
 /* ============================================================
+   Shared power gauge between a player and a border neighbor (R-2.2, R-5.8)
+   One gauge per border side ("left"/"right"), reused every turn, reset each
+   new row. Graduated 1–10; markers above 10 are flagged (physical +10 face).
+   ============================================================ */
+
+/* Gauge + the temporary strength-gap box below it, stacked as one flex-row child. */
+.bc-gauge-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+/* boards.png pos.7 (see ASSETS.md), native 220×900. Sized in JS by _sizeGauges()
+   (height = 80% of the actual rendered grid height, per user spec) — width, and
+   background-size/position, are computed there to match that height's scale
+   factor, so only structural/default rules live here. */
+.bc-power-gauge {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  background-image: url("img/boards.png");
+  background-repeat: no-repeat;
+  margin-top: 18px; /* align with grid, below the flank label row */
+}
+
+/* Container for the round's strength-gap history, one line appended per turn (see
+   notif_combatResolved) — column-reverse so the newest line lands on top and turn 1's
+   line stays at the bottom, as requested. Cleared only at round end
+   (_clearGaugeDiffHistory), not between turns. */
+.bc-gauge-diff {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 4px;
+  /* Clear the disc resting at power 0 (it sits ~1 disc-size below the gauge's own box,
+     see .bc-gauge-marker's bottom offset, plus its own height) before this starts. */
+  margin-top: calc(var(--disc-size, 44px) * 2 + 4px);
+}
+
+.bc-gauge-diff-line {
+  min-width: 28px;
+  min-height: 20px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+.bc-gauge-track {
+  display: flex;
+  flex-direction: column-reverse;
+  flex: 1;
+  width: 100%;
+}
+
+/* Structural only — 10 equal slots for marker `bottom` positioning.
+   The graduation (1–10) is printed on the boards.png art itself. */
+.bc-gauge-tick {
+  flex: 1;
+  pointer-events: none;
+}
+
+/* gems_power_discs.png cell 300×300 native. --disc-size (set in JS by _sizeGauges(),
+   one gauge slot = gaugeHeight / 10) and --disc-col (set once per marker in
+   _gaugeHtml(), color+face column) drive the sprite math below. Always visible —
+   physical token rests just below the gauge at power 0 (see _setGaugeMarker). */
+.bc-gauge-marker {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--disc-size, 44px);
+  height: var(--disc-size, 44px);
+  bottom: calc(-10% - 4px); /* a few extra px of breathing room below the gauge */
+  background-image: url("img/gems_power_discs.png");
+  background-size: calc(var(--disc-size, 44px) * 8) calc(var(--disc-size, 44px) * 2);
+  background-position-x: calc(var(--disc-size, 44px) * var(--disc-col, 0) * -1);
+  background-position-y: 0;
+  background-repeat: no-repeat;
+  transition: bottom 0.4s ease;
+  box-sizing: border-box;
+}
+
+.bc-gauge-marker.bc-gauge-over10 {
+  background-position-y: calc(var(--disc-size, 44px) * -1);
+}
+
+/* Left/right offset so the two rivals' tokens on a border sit flush against their
+   own owner's edge of the gauge, not overlapping in the middle. --gauge-w is set
+   alongside --disc-size in _sizeGauges(). */
+#bc-gauge-left .bc-gauge-marker-mine {
+  transform: translateX(calc(-50% + (var(--gauge-w, 110px) - var(--disc-size, 44px)) / 2));
+}
+#bc-gauge-left .bc-gauge-marker-theirs {
+  transform: translateX(calc(-50% - (var(--gauge-w, 110px) - var(--disc-size, 44px)) / 2));
+}
+#bc-gauge-right .bc-gauge-marker-mine {
+  transform: translateX(calc(-50% - (var(--gauge-w, 110px) - var(--disc-size, 44px)) / 2));
+}
+#bc-gauge-right .bc-gauge-marker-theirs {
+  transform: translateX(calc(-50% + (var(--gauge-w, 110px) - var(--disc-size, 44px)) / 2));
+}
+
+/* ============================================================
    Cards — outer wrapper (managed by bga-cards CardManager)
    ============================================================ */
 
@@ -229,7 +321,7 @@
 .bc-card {
   width: 167px;
   height: 119px;
-  border-radius: 4px;
+  border-radius: 5px;
   border: 1px solid rgba(0, 0, 0, 0.25);
   user-select: none;
   position: relative;
@@ -239,7 +331,14 @@
 }
 
 /* bga-cards injects position:absolute + full-size on .card-side; we add
-   display:flex so text/sprite content centres inside each face. */
+   display:flex so text/sprite content centres inside each face.
+   NOTE: the real class actually has a "bga-cards_" prefix (bga-cards_card-side) — this rule
+   (and the 3D-flip fallback rules further down) never matched anything, all session. Left
+   as-is here on purpose: nothing currently relies on it (desktop rendering has been fine
+   without it — .bc-card.bc-card-hidden has its own separate, correctly-matching centering
+   rule for the face-down "▪" placeholder), and "fixing" it now would be an untested,
+   game-wide visual change with no established need. Only corrected where mobile cropping
+   actually depends on it (see .bc-cell .bc-card .bga-cards_card-side below). */
 .bc-card .card-side {
   display: flex;
   align-items: center;
@@ -289,8 +388,11 @@
    set via inline style (computed from type + type_arg + family). */
 .bc-card-sprite {
   background-image: url("img/cards_scoundrels.png");
-  background-size: 2004px 357px;
+  background-size: 3006px 357px;
   background-repeat: no-repeat;
+  /* Set via --sprite-x/--sprite-y custom props (JS), not a literal inline shorthand — lets
+     the mobile media query override just the X half via calc() (see .bc-cell .bc-card-sprite). */
+  background-position: var(--sprite-x, 0) var(--sprite-y, 0);
 }
 
 /* Traits overlay — shown on all visible cards (hand + grid) */
@@ -312,6 +414,12 @@
   line-height: 1.2;
 }
 
+/* Traits are individual <span> children (see setupFrontDiv) — separator is drawn here, not
+   baked into the text, so the mobile grid-card override below can drop it with content:none. */
+.bc-card-trait + .bc-card-trait::before {
+  content: " · ";
+}
+
 /* Face-down card back — on the back .card-side div (inside bga-cards element) */
 .bc-card-hidden {
   background: linear-gradient(150deg, #2c3e50 0%, #4a6278 100%);
@@ -329,9 +437,16 @@
   justify-content: center;
 }
 
-/* bga-cards flip support — these are normally injected by the library, but
-   provided here as a fallback so the 3D flip works even if CSS injection fails. */
-.bc-card .card-sides {
+/* bga-cards flip support — these are normally injected by the library, but provided here
+   as a fallback so the 3D flip works even if that injection hasn't landed yet (race) or
+   fails. Real class names confirmed by DevTools inspection this session: bga-cards prefixes
+   them (`bga-cards_card-sides`/`bga-cards_card-side`), NOT the bare `.card-sides`/`.card-side`
+   this block used before — which never matched anything, so backface-visibility was never
+   actually enforced by us. During the brief window before the library's own stylesheet
+   applied, a rotating card had no backface-visibility rule at all, letting the OTHER face
+   (whichever card was still under it, front or back) show through mid-flip — exactly the
+   "flips and briefly shows a different card, then self-corrects" bug this fixes. */
+.bc-card .bga-cards_card-sides {
   width: 100%;
   height: 100%;
   position: relative;
@@ -339,7 +454,7 @@
   transition: transform 0.5s ease-in-out;
 }
 
-.bc-card .card-side {
+.bc-card .bga-cards_card-side {
   position: absolute;
   width: 100%;
   height: 100%;
@@ -347,7 +462,7 @@
   -webkit-backface-visibility: hidden;
 }
 
-.bc-card .card-side.back {
+.bc-card .bga-cards_card-side.back {
   transform: rotateY(180deg);
 }
 
@@ -360,7 +475,10 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px 4px 4px;
-  min-height: 30px;
+  /* Matches .bc-card's own height (119px) so the box is the same size whether it holds cards
+     or is momentarily empty (between deals) — was 30px, causing the whole page to jump/
+     reflow every time the hand emptied and refilled. */
+  min-height: 119px;
   border-top: 1px dashed #ccc;
   margin-top: 4px;
 }
@@ -402,17 +520,10 @@
    ============================================================ */
 
 .bc-draft-deck-area {
-  margin-top: 8px;
-  padding: 6px 8px;
-  background: #ececec;
-  border-radius: 6px;
+  /* Plain wrapper now — no background/border/label box. Sits inside #bc-footer-deck-{pid},
+     the same slot Deploy's own .bc-deck-pile occupies later, so the deck reads as staying in
+     the same spot across both phases instead of jumping around a distinct gray box. */
   width: fit-content;
-}
-
-.bc-draft-deck-label {
-  font-size: 11px;
-  color: #666;
-  margin-bottom: 4px;
 }
 
 /* LineStock renders the fan as a flex column — gap:0 lets our negative
@@ -437,43 +548,10 @@
    Deploy UI
    ============================================================ */
 
-#bc-deploy-ui {
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: #f8f9fa;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-}
-
-#bc-deploy-hint {
-  margin: 0 0 6px;
-  font-size: 12px;
-  color: #666;
-}
-
-#bc-deploy-slots {
-  display: flex;
-  gap: 10px;
-  margin: 6px 0 10px;
-}
-
-.bc-deploy-slot {
-  padding: 3px 8px;
-  background: #e0e0e0;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: bold;
-}
-
 #bc-gems-info {
   margin-top: 8px;
   font-size: 11px;
   color: #555;
-}
-
-/* Mulligan mode: hand cards pulse to signal selection */
-#bc-deploy-ui.bc-mulligan-mode .bc-hand-card {
-  box-shadow: 0 0 0 2px #e67e22;
 }
 
 /* Deploy phase — empty grid cells on the active row are clickable */
@@ -643,8 +721,9 @@
 
 /* ============================================================
    Gems zone — 3 gem icons between grid and hand row
-   gems.png: 1200×600 — 4 cols × 2 rows (300×300 native) displayed at 48×48 (scale 0.16)
-   background-size: 192×96. col = family-1 (0-based), row: charged=0, uncharged=-48px
+   gems_power_discs.png: 2400×600 — 8 cols × 2 rows (300×300 native), displayed at 48×48.
+   Cols 0-3 = gems (red/green/blue/yellow), cols 4-7 = power discs (see .bc-gauge-marker).
+   background-size: 384×96. row: charged/"0" face=0, uncharged/"+10" face=-48px
    ============================================================ */
 
 .bc-gems-zone {
@@ -658,8 +737,8 @@
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  background-image: url("img/gems.png");
-  background-size: 192px 96px;
+  background-image: url("img/gems_power_discs.png");
+  background-size: 384px 96px;
   background-repeat: no-repeat;
   background-position: -144px 0; /* default: col 4 (yellow), charged */
 }
@@ -674,13 +753,56 @@
 .bc-gem[data-state="uncharged"] { background-position-y: -48px; }
 
 /* ============================================================
-   Components row — wraps gems zone + class-specific components side by side
+   Board footer — one row below the grid: deck (left) / hand (center) /
+   gems + class components (right). Left/right zone widths mirror the width of
+   a flank column + its gauge column above them (173px cell + --gauge-w, set by
+   _sizeGauges() on the .bc-player-board root), so the footer lines up with the
+   grid-with-flanks columns above it instead of stacking as separate full rows.
    ============================================================ */
 
-.bc-components-row {
+.bc-board-footer {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+}
+
+/* Default (opponent boards — no flanks/gauges above, so no width to mirror): size to
+   content instead of a fixed formula, or gems/rage/dice overflow past a too-narrow fixed
+   box (--gauge-w is only ever set on MY OWN board by _sizeGauges(), so this fixed-width
+   formula resolved to a bogus 181px fallback for every opponent — narrower than their
+   actual gems+rage+dice content). "My board" (.bc-my-board, flagged in _build()) overrides
+   back to the flank+gauge-aligned width just below. */
+.bc-footer-deck {
+  width: auto;
+  flex-shrink: 0;
+}
+
+.bc-my-board .bc-footer-deck {
+  width: calc(173px + var(--gauge-w, 0px) + 8px);
+}
+
+.bc-footer-hand {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.bc-footer-hand .bc-hand-area {
+  width: 527px; /* matches grid width: 3 × 173px + 2 × 4px gap */
+  flex: none;
+}
+
+.bc-footer-extras {
+  width: auto;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column; /* gems on top, rage marker (+ dice) below — requested placement */
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.bc-my-board .bc-footer-extras {
+  width: calc(173px + var(--gauge-w, 0px) + 8px);
 }
 
 .bc-class-components {
@@ -695,21 +817,6 @@
   height: 60px;
   position: relative;
   flex-shrink: 0;
-}
-
-/* ============================================================
-   Hand row — wraps hand area
-   ============================================================ */
-
-.bc-hand-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.bc-hand-row .bc-hand-area {
-  width: 527px; /* matches grid width: 3 × 173px + 2 × 4px gap */
-  flex: none;
 }
 
 /* ============================================================
@@ -732,16 +839,6 @@
   background-position: -600px -60px;
 }
 
-/* ============================================================
-   Turn order marker
-   ============================================================ */
-
-.bc-first-player-marker {
-  display: inline-block;
-  margin-left: 5px;
-  color: #f1c40f;
-  font-size: 13px;
-}
 
 /* ============================================================
    Token icons — gambler (cols 7-10) and pirate_gold (col 12)
@@ -887,4 +984,183 @@
   width: 155px;
   box-sizing: border-box;
   animation: bc-badge-pop 0.25s ease-out;
+}
+
+/* ============================================================
+   Mobile layout — goal: fit the grid + both rival flanks across the screen
+   width. Breakpoint chosen arbitrarily (700px) — adjust if it doesn't match
+   real device testing.
+   ============================================================ */
+
+@media (max-width: 700px) {
+  /* _sizeGauges() inline-sets .bc-player-board's width in px (to match the flanked board's
+     measured width, desktop-only concern) — !important to override that inline style so
+     every board (mine + opponents') takes the full available width on mobile instead. */
+  .bc-player-board {
+    width: 100% !important;
+  }
+
+  /* Grid + gauges + flanks: stretch the whole row to use the full board width instead of
+     just its own (narrower, now that cards are cropped) content size sitting flush left with
+     blank space to its right — space distributed between the 5 sections (flank/gauge/grid/
+     gauge/flank) rather than making any of them individually bigger. */
+  .bc-grid-with-flanks {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /* No room for the deck pile next to a full-width grid+flanks row */
+  .bc-footer-deck {
+    display: none;
+  }
+
+  /* Gems + rage/dice move below the hand instead of sitting beside the (now hidden) deck */
+  .bc-board-footer {
+    flex-direction: column;
+    align-items: center;
+  }
+  .bc-footer-hand {
+    order: 1;
+    width: 100%;
+  }
+  .bc-footer-extras {
+    order: 2;
+    width: auto;
+    justify-content: center;
+  }
+
+  /* Grid + flank cards: show only the sprite's right half (height unchanged), so 5
+     card-columns (2 flanks + 3 grid) fit in the width 3 normally take. */
+
+  /* THE actual root cause, found via DevTools (thanks!) after 6 rounds of chasing individual
+     elements: bga-cards drives every size it manages from --bga-cards_card-width (167px) /
+     --bga-cards_card-height, set inline on the grid container and inherited by everything
+     inside (cell, card wrapper, internal face divs — all of it). All our previous per-element
+     `width` overrides were fighting descendants that ultimately still computed from this one
+     inherited variable. Overriding the variable itself at its root cascades the fix to
+     everything at once — !important since bga-cards sets it inline. Height untouched on
+     purpose (kept the requested "no height change").
+   */
+  .bc-grid {
+    --bga-cards_card-width: 83.5px !important;
+    grid-template-columns: repeat(3, 83.5px);
+  }
+  .bc-col-header {
+    grid-template-columns: 83.5px 83.5px 83.5px;
+  }
+  /* !important: bga-cards inline-sizes the slot div (.bc-cell, via SlotStock's
+     cardWidth/cardHeight) to 173px — a plain class rule can't beat that inline style (this is
+     why the flank cards, our own hand-rolled divs with no inline sizing, shrank fine while the
+     CardManager-managed grid cells didn't). */
+  .bc-cell,
+  .bc-flank-cell {
+    width: 83.5px !important;
+  }
+
+  /* Grid AND flank cards: same method now (translate-crop kept losing fights against
+     bga-cards' own inline styling on the managed grid cards — 3 rounds of drift/offset bugs
+     on badges and tokens, both anchored to .bc-cell, not .bc-card). Unified on the method
+     that already worked for flank: actually shrink .bc-card (and its inner face divs, which
+     bga-cards sizes independently of the outer wrapper — the real cause of (25)'s "overlap"
+     glitch was this inner div staying full-width while only the outer wrapper visually
+     clipped, not some deeper 3D-flip incompatibility) to match .bc-cell exactly, and shift
+     the sprite by half a card-width so the visible slice is the right half. With card and
+     cell the same size 1:1, anything anchored to .bc-cell (badges, tokens) lines up with
+     the visible card automatically — no separate crop-vs-cell math to keep in sync. */
+  .bc-cell .bc-card,
+  .bc-flank-cell .bc-card {
+    width: 83.5px !important;
+    /* bga-cards ALSO redefines --bga-cards_card-width inline per-card (167px), not just
+       inherited from .bc-grid — confirmed via DevTools (disabling it fixed the flip's
+       geometry) that it drives some internal 3D-flip transform math independent of the
+       element's real width. !important here (same trick as everywhere else in this file)
+       beats that plain inline redefinition; _watchMobileGridCardWidth also forces it via JS
+       for the same elements as extra insurance. */
+    --bga-cards_card-width: 83.5px !important;
+    --bga-cards_card-effective-width: 83.5px !important;
+  }
+  /* The real bga-cards classes are "bga-cards_card-sides" (a wrapper between .bc-card and
+     the faces, PLURAL, holds the 3D flip transform) and "bga-cards_card-side" (SINGULAR, one
+     per face) — not "card-side"; this rule (and the desktop fallback rules near .bc-card's
+     definition) never matched anything until fixed here. Found via live DOM inspection: the
+     face's own width:100% resolved against the untouched "sides" wrapper (still ~167px),
+     not against .bc-card — missing the plural wrapper left the computed width at ~167px
+     despite the face itself carrying width:100% !important. */
+  .bc-cell .bc-card .bga-cards_card-side,
+  .bc-cell .bc-card .bga-cards_card-sides,
+  .bc-flank-cell .bc-card .bga-cards_card-side,
+  .bc-flank-cell .bc-card .bga-cards_card-sides {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .bc-cell .bc-card-sprite,
+  .bc-flank-cell .bc-card-sprite {
+    background-position-x: calc(var(--sprite-x, 0px) - 83.5px) !important;
+  }
+
+  /* Gauges + tokens: drop the sprite images, draw plain CSS shapes instead */
+  .bc-power-gauge {
+    background-image: none;
+    background-color: #2886cc;
+    border: 1px solid #ccc;
+  }
+  .bc-gauge-marker {
+    background-image: none !important;
+    background-color: var(--disc-hex, #888888);
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.4);
+  }
+  .bc-token {
+    /* Real sprite kept (was replaced with a plain colored dot — reverted per request: image
+       stays, just resized). Scale (not width/height) so the corner anchor (top:3px;right:3px,
+       set inline per token) doesn't need touching — shrinks in place from its own top-right
+       corner. */
+    transform: scale(0.5);
+    transform-origin: top right;
+  }
+
+  /* Tooltip: bigger text (12px unreadable on a phone) + illustration shrunk to native 1x
+     size (was displayed at 2x) to free up horizontal room for it. */
+  .bc-card-tooltip {
+    font-size: 16px !important;
+  }
+  .bc-tooltip-card-img {
+    width: 167px !important;
+    height: 119px !important;
+    background-size: 3006px 357px !important;
+    background-position: var(--sprite-x, 0) var(--sprite-y, 0) !important;
+  }
+
+  /* Graduation (1 bottom → 10 top) was printed on the boards.png art itself (see
+     .bc-gauge-tick's desktop comment) — gone now that the image is dropped above, so draw
+     it in CSS: counter-reset on the track (10 equal ticks, DOM-first = bottom because the
+     track is column-reverse), one number + divider line per tick. */
+  .bc-gauge-track {
+    counter-reset: bc-tick 0;
+  }
+  .bc-gauge-tick {
+    counter-increment: bc-tick 1;
+    position: relative;
+    border-top: 1px solid #fff;
+  }
+  .bc-gauge-tick::after {
+    content: counter(bc-tick);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 8px;
+    font-weight: bold;
+    line-height: 1;
+    color: #9e1e21;
+    pointer-events: none;
+  }
+
+  /* Effect-resolution badges: fixed 155px (sized for the full 167px-wide desktop card) now
+     overflows past the halved 83.5px mobile grid cell — shrink to fit and let the (already
+     wrap-capable) text break onto more lines instead of spilling past the cell/screen edge. */
+  .bc-effect-badge {
+    width: 80px;
+    max-width: 80px;
+  }
 }

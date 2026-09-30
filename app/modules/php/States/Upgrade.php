@@ -42,6 +42,12 @@ class Upgrade extends GameState
             $this->game->DbQuery("DELETE FROM bc_token");
             $this->game->bga->notify->all('tokensCleared', '', []);
 
+            // Effect-resolution badges and gauge strength-gap history are cleared once per
+            // round too (client already clears them on notif_upgradeMainEntered; this keeps
+            // the F5-restore snapshot in sync).
+            $this->game->bga->globals->set('effect_badges', []);
+            $this->game->bga->globals->set('gauge_diff_history', []);
+
             // Step 2: Flip border cards face-down (positions 0,2,3,5,6,8 — all except center 1,4,7)
             foreach ($playerOrder as $rawPid) {
                 $pid = (int)$rawPid;
@@ -67,6 +73,9 @@ class Upgrade extends GameState
                 $playerOptions = [];
                 foreach ($centerCards as $card) {
                     $cardType = (int)$card['type'];
+                    if ($cardType === Game::RANK_GOLD) {
+                        continue; // Gold is the max rank — no further upgrade options
+                    }
                     $nextPile = $cardType === Game::RANK_BRONZE ? 'shared_silver' : 'shared_gold';
 
                     $optRows = $this->game->getCollectionFromDb(

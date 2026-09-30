@@ -75,21 +75,14 @@ class NextRound extends GameState
         $this->game->bga->globals->set('round_number', $round + 1);
         $this->game->bga->globals->set('turn_number', 1);
 
-        // Rotate first player anticlockwise (shift player_order left by 1)
-        $newOrder = $playerOrder;
-        if (count($playerOrder) > 1) {
-            $newOrder = array_merge(array_slice($playerOrder, 1), array_slice($playerOrder, 0, 1));
-            $this->game->bga->globals->set('player_order', $newOrder);
-            $this->game->bga->globals->set('turn_order_start_id', (int)$newOrder[0]);
-        }
+        // R-4.4: player_order is fixed seat adjacency, never rotated (no first player, no turn order)
 
         $this->game->bga->tableStats->inc('rounds_played', 1);
 
         $this->game->bga->notify->all('roundStarted',
             clienttranslate('Round ${round_number} begins'), [
-                'round_number'    => $round + 1,
-                'turn_number'     => 1,
-                'first_player_id' => (int)$newOrder[0],
+                'round_number' => $round + 1,
+                'turn_number'  => 1,
             ]
         );
 

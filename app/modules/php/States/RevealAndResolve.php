@@ -21,7 +21,9 @@ class RevealAndResolve extends GameState
         $turn        = (int)($this->game->bga->globals->get('turn_number') ?? 1);
         $row         = $turn - 1; // row index 0–2
         $rowPos      = [$row * 3, $row * 3 + 1, $row * 3 + 2];
+        [$leftPos, $centerPos, $rightPos] = $rowPos;
         $playerOrder = (array)($this->game->bga->globals->get('player_order') ?? []);
+        $isSolo      = (bool)($this->game->bga->globals->get('is_solo') ?? false);
 
         // Idempotency guard: if cards are already face-up, skip to CheckTurn.
         // Protects against server-restart re-entry of automatic states.
@@ -55,8 +57,121 @@ class RevealAndResolve extends GameState
             );
         }
 
-        // Step 2: Influence phase — center column card (position = row*3 + 1)
-        $centerPos = $row * 3 + 1;
+        if ($isSolo) {
+            $this->revealBotRow($row);
+            $this->resolveSoloRow($playerOrder, $leftPos, $centerPos, $rightPos);
+        } else {
+            $this->resolveMultiplayerRow($playerOrder, $leftPos, $centerPos, $rightPos);
+        }
+
+        return CheckTurn::class;
+    }
+
+    // -------------------------------------------------------------------------
+    // R-5.7: strict order — every player's LEFT card, THEN every player's CENTER
+    // card, THEN every player's RIGHT card. A border is fed by two cards resolved
+    // in two different passes (my right card vs my right neighbor's left card),
+    // so a border can only be scored once the right-pass is complete.
+    // Iteration order within each pass follows player_order (R-5.10 tie-break).
+    // -------------------------------------------------------------------------
+
+    private function resolveMultiplayerRow(array $playerOrder, int $leftPos, int $centerPos, int $rightPos): void
+    {
+        $n = count($playerOrder);
+
+        // Step 1: every player's LEFT card (rival = left neighbor's RIGHT card).
+        // Each border's matchup is announced here, right before its first (left-side) contributor resolves.
+        [$leftStrengths, $leftResults] = $this->resolveBorderPass($playerOrder, $leftPos, -1, $rightPos, announce: true);
+
+        // Step 2: every player's CENTER card (influence)
+        $this->resolveCenterForAll($playerOrder, $centerPos);
+
+        // Step 3: every player's RIGHT card (rival = right neighbor's LEFT card)
+        [$rightStrengths, $rightResults] = $this->resolveBorderPass($playerOrder, $rightPos, +1, $leftPos, announce: false);
+
+        // Step 4: score every border now that both of its cards are resolved
+        for ($i = 0; $i < $n; $i++) {
+            $leftContributorPid  = (int)$playerOrder[$i];
+            $rightContributorPid = (int)$playerOrder[($i + 1) % $n];
+            $this->scoreBorder(
+                $leftContributorPid,  $rightPos, $rightStrengths[$leftContributorPid]  ?? 0, $rightResults[$leftContributorPid]  ?? $this->emptyEffectResult(),
+                $rightContributorPid, $leftPos,  $leftStrengths[$rightContributorPid]  ?? 0, $leftResults[$rightContributorPid]  ?? $this->emptyEffectResult()
+            );
+        }
+    }
+
+    // Resolve one border-side position (left or right column) for every player, in player_order sequence.
+    // $neighborOffset: -1 for the left column (rival = left neighbor's card at $rivalPos), +1 for the right column.
+    // $announce: announce the border matchup right before resolving (only done once, on the first pass touching it).
+    private function resolveBorderPass(array $playerOrder, int $pos, int $neighborOffset, int $rivalPos, bool $announce): array
+    {
+        $strengths = [];
+        $results   = [];
+        foreach ($playerOrder as $rawPid) {
+            $pid       = (int)$rawPid;
+            $rivalPid  = $this->neighborPid($playerOrder, $pid, $neighborOffset);
+            $rivalCard = $this->getCardAt($rivalPid, $rivalPos);
+            $card      = $this->getCardAt($pid, $pos);
+
+            if ($announce && $card && $rivalCard) {
+                $this->notifyCombatStart(
+                    $pid,      $this->game->getPlayerNameById($pid),
+                    CardEffects::getName((int)$card['type'], (int)$card['type_arg']),
+                    $rivalPid, $this->game->getPlayerNameById($rivalPid),
+                    CardEffects::getName((int)$rivalCard['type'], (int)$rivalCard['type_arg'])
+                );
+            }
+
+            [$str, $res] = $this->resolvePosition($pid, $pos, 'combat', $rivalCard, $rivalPid, $rivalPos);
+            $strengths[$pid] = $str;
+            $results[$pid]   = $res;
+        }
+        return [$strengths, $results];
+    }
+
+    private function neighborPid(array $playerOrder, int $pid, int $offset): int
+    {
+        $order = array_map('intval', $playerOrder);
+        $idx   = array_search($pid, $order, true);
+        $n     = count($order);
+        if ($idx === false || $n === 0) {
+            return $pid;
+        }
+        return $order[($idx + $offset + $n) % $n];
+    }
+
+    // Resolve a single card's combat/influence effect: apply effect, compute capped strength, notify.
+    // Face-down card (R-8.5): no effect applied, power 0.
+    private function resolvePosition(int $pid, int $pos, string $phase, ?array $rivalCard, ?int $rivalPid, ?int $rivalPos): array
+    {
+        $card = $this->getCardAt($pid, $pos);
+        if (!$card || !(int)$card['face_up']) {
+            return [0, $this->emptyEffectResult()];
+        }
+
+        $gemsBefore = $this->game->gemsCharged->get($pid);
+        $res = CardEffects::applyEffect($card, $pid, $pos, $phase, $rivalCard, $rivalPid, $rivalPos, $this->game);
+        if ($this->game->gemsCharged->get($pid) !== $gemsBefore) {
+            $this->broadcastGemUpdated($pid);
+        }
+
+        // Re-read: the effect may have flipped this card face-down (R-8.5 — power then frozen at 0 for this pass)
+        $card = $this->getCardAt($pid, $pos) ?? $card;
+        $str  = $this->calcStrength($pid, $pos, $card, $res);
+
+        if ($res['vp_bonus'] > 0) {
+            $this->game->bga->playerScore->inc($pid, $res['vp_bonus']);
+            $this->addFactionPoints((int)$card['family'], $res['vp_bonus']);
+        }
+
+        $this->notifyCombatEffect($card, $pid, $pos, $res, $str);
+
+        return [$str, $res];
+    }
+
+    // Resolve every player's center card (influence phase) — no combat, no rival.
+    private function resolveCenterForAll(array $playerOrder, int $centerPos): void
+    {
         foreach ($playerOrder as $rawPid) {
             $pid        = (int)$rawPid;
             $centerCard = $this->getCardAt($pid, $centerPos);
@@ -69,7 +184,6 @@ class RevealAndResolve extends GameState
                 $this->game
             );
 
-            // Announce the effect FIRST so the player reads it before state changes appear
             $cardName = CardEffects::getName((int)$centerCard['type'], (int)$centerCard['type_arg']);
             $this->game->bga->notify->all('influenceResolved',
                 clienttranslate('${player_name}\'s ${card_name} applies its influence effect'),
@@ -86,8 +200,15 @@ class RevealAndResolve extends GameState
                     'rage_toggle'    => $res['rage_toggle'],
                 ]
             );
+            $this->recordEffectBadge([
+                'badge_kind'  => 'influence',
+                'player_id'   => $pid,
+                'position'    => $centerPos,
+                'effect_type' => "{$centerCard['type']}:{$centerCard['type_arg']}",
+                'effect_desc' => $res['effect_text'] ?? '—',
+                'dice_roll'   => $res['dice_roll'],
+            ]);
 
-            // State changes arrive AFTER the effect badge (client processes queue in order)
             if ($this->game->gemsCharged->get($pid) !== $gemsBefore) {
                 $this->broadcastGemUpdated($pid);
             }
@@ -95,152 +216,91 @@ class RevealAndResolve extends GameState
 
             if ($res['vp_bonus'] > 0) {
                 $this->game->bga->playerScore->inc($pid, $res['vp_bonus']);
+                $this->addFactionPoints((int)$centerCard['family'], $res['vp_bonus']);
             }
         }
+    }
 
-        // Step 2b (solo): reveal current row of bot columns
-        $isSolo = (bool)($this->game->bga->globals->get('is_solo') ?? false);
-        if ($isSolo) {
-            $this->revealBotRow($row);
-        }
+    // Score one border once both of its contributing cards are resolved (R-5.11).
+    // "left"/"right" here just label the two sides of this border for the notification payload —
+    // they are NOT necessarily each contributor's own left/right grid column.
+    private function scoreBorder(
+        int $leftPid,  int $leftPos,  int $lStr, array $lRes,
+        int $rightPid, int $rightPos, int $rStr, array $rRes
+    ): void {
+        $diff     = abs($lStr - $rStr);
+        $winnerId = null;
+        $bonusVp  = 0;
 
-        // Step 3: Combat phase
-        if ($isSolo) {
-            $this->resolveSoloCombats($playerOrder, $row);
+        if ($lStr > $rStr) {
+            $winnerId = $leftPid;
+            $this->game->bga->playerScore->inc($leftPid, $diff);
+            $this->game->bga->playerStats->inc('combat_wins',   1,     $leftPid);
+            $this->game->bga->playerStats->inc('combat_losses', 1,     $rightPid);
+            $this->game->bga->playerStats->inc('combat_points', $diff, $leftPid);
+        } elseif ($rStr > $lStr) {
+            $winnerId = $rightPid;
+            $this->game->bga->playerScore->inc($rightPid, $diff);
+            $this->game->bga->playerStats->inc('combat_wins',   1,     $rightPid);
+            $this->game->bga->playerStats->inc('combat_losses', 1,     $leftPid);
+            $this->game->bga->playerStats->inc('combat_points', $diff, $rightPid);
         } else {
-            $this->resolveCombats($playerOrder, $row);
+            $this->game->bga->playerStats->inc('combat_ties', 1, $leftPid);
+            $this->game->bga->playerStats->inc('combat_ties', 1, $rightPid);
         }
 
-        return CheckTurn::class;
+        // After-combat effect (Snake): winner rolls die — R-9.4: server-side BGA random
+        if ($winnerId !== null && ($lRes['after_combat'] || $rRes['after_combat'])) {
+            $bonusVp = bga_rand(1, 6);
+            $this->game->bga->playerScore->inc($winnerId, $bonusVp);
+            $this->game->bga->playerStats->inc('combat_points', $bonusVp, $winnerId);
+        }
+
+        if ($winnerId !== null) {
+            $combatMsg  = clienttranslate('${player_name} wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
+            $combatPid  = $winnerId;
+            $combatName = $this->game->getPlayerNameById($winnerId);
+        } else {
+            $combatMsg  = clienttranslate('Tie (${left_strength} vs ${right_strength})');
+            $combatPid  = 0;
+            $combatName = '';
+        }
+        $payload = [
+            'player_id'       => $combatPid,
+            'player_name'     => $combatName,
+            'left_player_id'  => $leftPid,
+            'right_player_id' => $rightPid,
+            'left_position'   => $leftPos,
+            'right_position'  => $rightPos,
+            'left_strength'   => $lStr,
+            'right_strength'  => $rStr,
+            'winner_id'       => $winnerId,
+            'combat_points'   => $diff,
+            'bonus_vp'        => $bonusVp,
+            'left_vp'         => $lRes['vp_bonus'],
+            'right_vp'        => $rRes['vp_bonus'],
+            'left_dice'       => $lRes['dice_roll'],
+            'right_dice'      => $rRes['dice_roll'],
+        ];
+        $this->game->bga->notify->all('combatResolved', $combatMsg, $payload);
+        $this->recordGaugeDiffHistory($payload);
     }
 
-    // -------------------------------------------------------------------------
-
-    private function resolveCombats(array $playerOrder, int $row): void
+    private function emptyEffectResult(): array
     {
-        $n = count($playerOrder);
-        for ($i = 0; $i < $n; $i++) {
-            $leftPid  = (int)$playerOrder[$i];
-            $rightPid = (int)$playerOrder[($i + 1) % $n];
-
-            // Left player's right-border card vs right player's left-border card
-            $leftPos  = $row * 3 + 2; // col 3
-            $rightPos = $row * 3 + 0; // col 1
-
-            $leftCard  = $this->getCardAt($leftPid, $leftPos);
-            $rightCard = $this->getCardAt($rightPid, $rightPos);
-
-            if (!$leftCard || !$rightCard) continue;
-            if (!(int)$leftCard['face_up'] || !(int)$rightCard['face_up']) continue;
-
-            // Apply effects: left player first (per rules), then right player
-            $gemsBeforeLeft = $this->game->gemsCharged->get($leftPid);
-            $lRes = CardEffects::applyEffect(
-                $leftCard, $leftPid, $leftPos, 'combat',
-                $rightCard, $rightPid, $rightPos,
-                $this->game
-            );
-            if ($this->game->gemsCharged->get($leftPid) !== $gemsBeforeLeft) {
-                $this->broadcastGemUpdated($leftPid);
-            }
-
-            $gemsBeforeRight = $this->game->gemsCharged->get($rightPid);
-            $rRes = CardEffects::applyEffect(
-                $rightCard, $rightPid, $rightPos, 'combat',
-                $leftCard, $leftPid, $leftPos,
-                $this->game
-            );
-            if ($this->game->gemsCharged->get($rightPid) !== $gemsBeforeRight) {
-                $this->broadcastGemUpdated($rightPid);
-            }
-
-            // Re-read cards (Cabin Boy may have flipped face-down during effect)
-            $leftCard  = $this->getCardAt($leftPid,  $leftPos)  ?? $leftCard;
-            $rightCard = $this->getCardAt($rightPid, $rightPos) ?? $rightCard;
-
-            $lStr = $this->calcStrength($leftPid,  $leftPos,  $leftCard,  $lRes);
-            $rStr = $this->calcStrength($rightPid, $rightPos, $rightCard, $rRes);
-
-            // Announce combat sequence: start → effects → result
-            $this->notifyCombatStart(
-                $leftPid,  $this->game->getPlayerNameById($leftPid),
-                CardEffects::getName((int)$leftCard['type'],  (int)$leftCard['type_arg']),
-                $rightPid, $this->game->getPlayerNameById($rightPid),
-                CardEffects::getName((int)$rightCard['type'], (int)$rightCard['type_arg'])
-            );
-            $this->notifyCombatEffect($leftCard,  $leftPid,  $leftPos,  $lRes, $lStr);
-            $this->notifyCombatEffect($rightCard, $rightPid, $rightPos, $rRes, $rStr);
-
-            // Award differential points
-            $diff     = abs($lStr - $rStr);
-            $winnerId = null;
-            $bonusVp  = 0;
-
-            if ($lStr > $rStr) {
-                $winnerId = $leftPid;
-                $this->game->bga->playerScore->inc($leftPid, $diff);
-                $this->game->bga->playerStats->inc('combat_wins',   1,     $leftPid);
-                $this->game->bga->playerStats->inc('combat_losses', 1,     $rightPid);
-                $this->game->bga->playerStats->inc('combat_points', $diff, $leftPid);
-            } elseif ($rStr > $lStr) {
-                $winnerId = $rightPid;
-                $this->game->bga->playerScore->inc($rightPid, $diff);
-                $this->game->bga->playerStats->inc('combat_wins',   1,     $rightPid);
-                $this->game->bga->playerStats->inc('combat_losses', 1,     $leftPid);
-                $this->game->bga->playerStats->inc('combat_points', $diff, $rightPid);
-            } else {
-                $this->game->bga->playerStats->inc('combat_ties', 1, $leftPid);
-                $this->game->bga->playerStats->inc('combat_ties', 1, $rightPid);
-            }
-
-            // After-combat effect (Snake): winner rolls die
-            if ($winnerId !== null) {
-                $hasAfter = $lRes['after_combat'] || $rRes['after_combat'];
-                if ($hasAfter) {
-                    $bonusVp = rand(1, 6);
-                    $this->game->bga->playerScore->inc($winnerId, $bonusVp);
-                    $this->game->bga->playerStats->inc('combat_points', $bonusVp, $winnerId);
-                }
-            }
-
-            // Direct VP bonuses (Werewolf, Lady Fortune)
-            if ($lRes['vp_bonus'] > 0) {
-                $this->game->bga->playerScore->inc($leftPid, $lRes['vp_bonus']);
-            }
-            if ($rRes['vp_bonus'] > 0) {
-                $this->game->bga->playerScore->inc($rightPid, $rRes['vp_bonus']);
-            }
-
-            if ($winnerId !== null) {
-                $combatMsg  = clienttranslate('${player_name} wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
-                $combatPid  = $winnerId;
-                $combatName = $this->game->getPlayerNameById($winnerId);
-            } else {
-                $combatMsg  = clienttranslate('Tie (${left_strength} vs ${right_strength})');
-                $combatPid  = 0;
-                $combatName = '';
-            }
-            $this->game->bga->notify->all('combatResolved', $combatMsg, [
-                'player_id'       => $combatPid,
-                'player_name'     => $combatName,
-                'left_player_id'  => $leftPid,
-                'right_player_id' => $rightPid,
-                'left_position'   => $leftPos,
-                'right_position'  => $rightPos,
-                'left_strength'   => $lStr,
-                'right_strength'  => $rStr,
-                'winner_id'       => $winnerId,
-                'combat_points'   => $diff,
-                'bonus_vp'        => $bonusVp,
-                'left_vp'         => $lRes['vp_bonus'],
-                'right_vp'        => $rRes['vp_bonus'],
-                'left_dice'       => $lRes['dice_roll'],
-                'right_dice'      => $rRes['dice_roll'],
-            ]);
-        }
+        return [
+            'strength_bonus'         => 0,
+            'vp_bonus'               => 0,
+            'after_combat'           => false,
+            'dice_roll'              => null,
+            'rage_toggle'            => null,
+            'effect_text'            => null,
+            'card_flipped_face_down' => false,
+            'flipped_below'          => null,
+        ];
     }
 
-    // Base + token bonuses + effect bonus; face-down card = 0
+    // Base + token bonuses + effect bonus; face-down card = 0. Bounded [0;20] (R-5.8).
     private function calcStrength(int $playerId, int $gridPos, ?array $card, array $res): int
     {
         if (!$card || !(int)($card['face_up'] ?? 1)) {
@@ -248,17 +308,7 @@ class RevealAndResolve extends GameState
         }
         $base   = CardEffects::getBaseForce((int)$card['type'], (int)$card['type_arg']);
         $tokens = CardEffects::getTokenStrengthBonus($playerId, $gridPos, $this->game);
-        return max(0, $base + $tokens + (int)$res['strength_bonus']);
-    }
-
-    private function broadcastRageToggle(int $pid, array $res): void
-    {
-        if ($res['rage_toggle'] !== null) {
-            $this->game->bga->notify->all('rageUpdated', '', [
-                'player_id' => $pid,
-                'rage'      => $res['rage_toggle'],
-            ]);
-        }
+        return max(0, min(20, $base + $tokens + (int)$res['strength_bonus']));
     }
 
     private function broadcastGemUpdated(int $pid): void
@@ -272,8 +322,12 @@ class RevealAndResolve extends GameState
 
     private function broadcastTokensSync(int $pid): void
     {
+        // id selected first: getCollectionFromDb() keys its result by the first column by
+        // default, and grid_position alone isn't unique when a position holds 2+ tokens (the
+        // whole point of the 50%-overlap display) — same collision bug as Game::getAllDatas'
+        // tokens query, just for a live sync instead of a reload.
         $tokens = $this->game->getCollectionFromDb(
-            "SELECT grid_position, token_type, value FROM bc_token WHERE player_id = {$pid}"
+            "SELECT id, grid_position, token_type, value FROM bc_token WHERE player_id = {$pid}"
         );
         $this->game->bga->notify->all('tokensSyncPlayer', '', [
             'player_id' => $pid,
@@ -306,8 +360,197 @@ class RevealAndResolve extends GameState
     }
 
     // -------------------------------------------------------------------------
-    // Solo mode helpers
+    // Solo mode: single player, only 2 borders (Automa flanks left and right).
+    // R-10.5 order: Automa-left, player-left, player-center, player-right, Automa-right.
+    // R-5.11: points are attributed only once the WHOLE row is resolved — both
+    // borders' effects are computed as they occur, but scoring (and combatResolved)
+    // is deferred until after the right border, mirroring the multiplayer step-4 pass.
     // -------------------------------------------------------------------------
+
+    private function resolveSoloRow(array $playerOrder, int $leftPos, int $centerPos, int $rightPos): void
+    {
+        $pid = (int)$playerOrder[0];
+        $row = intdiv($leftPos, 3);
+
+        // Border 1 (left flank): Automa activates first — effects only, no scoring yet
+        $border1 = null;
+        $botLeft   = $this->getBotCard('right', $row); // bot_grid_right is displayed as the left flank
+        $pLeftCard = $this->getCardAt($pid, $leftPos);
+        if ($botLeft !== null && $pLeftCard !== null && (int)$pLeftCard['face_up']) {
+            $border1 = $this->resolveSoloCombatEffects('right', $row, $botLeft, $pid, $leftPos, $pLeftCard, botFirst: true);
+        }
+
+        // Center
+        $this->resolveCenterForAll($playerOrder, $centerPos);
+
+        // Border 2 (right flank): player activates first — effects only, no scoring yet
+        $border2 = null;
+        $botRight   = $this->getBotCard('left', $row); // bot_grid_left is displayed as the right flank
+        $pRightCard = $this->getCardAt($pid, $rightPos);
+        if ($botRight !== null && $pRightCard !== null && (int)$pRightCard['face_up']) {
+            $border2 = $this->resolveSoloCombatEffects('left', $row, $botRight, $pid, $rightPos, $pRightCard, botFirst: false);
+        }
+
+        // Row fully resolved — now score both borders (R-5.11)
+        if ($border1 !== null) {
+            [$botStr, $bRes, $pStr, $pRes] = $border1;
+            $this->scoreSoloBorder($botStr, $bRes, $pid, $pStr, $pRes, CardEffects::botGridPos('right', $row), $leftPos, 'right', $row);
+        }
+        if ($border2 !== null) {
+            [$botStr, $bRes, $pStr, $pRes] = $border2;
+            $this->scoreSoloBorder($botStr, $bRes, $pid, $pStr, $pRes, CardEffects::botGridPos('left', $row), $rightPos, 'left', $row);
+        }
+    }
+
+    // Apply both cards' effects for one solo border (in activation order) and notify them.
+    // Direct vp_bonus from card effects is applied immediately (same as multiplayer's resolvePosition) —
+    // only the win/loss combat differential is deferred to scoreSoloBorder().
+    private function resolveSoloCombatEffects(
+        string $side, int $row,
+        array $botCard, int $pid, int $playerPos, array $playerCard,
+        bool $botFirst
+    ): array {
+        $botGridPos = CardEffects::botGridPos($side, $row);
+
+        if ($botFirst) {
+            $bRes = CardEffects::applyBotEffect($botCard, $side, $row, $playerCard, $pid, $playerPos, $this->game);
+            if ($bRes['rage_toggle'] !== null) {
+                $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
+            }
+
+            $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
+            $pRes = CardEffects::applyEffect($playerCard, $pid, $playerPos, 'combat', $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos, $this->game);
+            if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
+                $this->broadcastGemUpdated($pid);
+            }
+        } else {
+            $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
+            $pRes = CardEffects::applyEffect($playerCard, $pid, $playerPos, 'combat', $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos, $this->game);
+            if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
+                $this->broadcastGemUpdated($pid);
+            }
+
+            $bRes = CardEffects::applyBotEffect($botCard, $side, $row, $playerCard, $pid, $playerPos, $this->game);
+            if ($bRes['rage_toggle'] !== null) {
+                $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
+            }
+        }
+
+        // Re-read player card (Cabin Boy may have flipped face-down during effect)
+        $playerCard = $this->getCardAt($pid, $playerPos) ?? $playerCard;
+
+        $botStr = $this->calcBotStrength($side, $row, $botCard, $bRes);
+        $pStr   = $this->calcStrength($pid, $playerPos, $playerCard, $pRes);
+
+        $this->notifyCombatStart(
+            CardEffects::BOT_PLAYER_ID, clienttranslate('Bot'),
+            CardEffects::getName((int)$botCard['type'],    (int)$botCard['type_arg']),
+            $pid, $this->game->getPlayerNameById($pid),
+            CardEffects::getName((int)$playerCard['type'], (int)$playerCard['type_arg'])
+        );
+        if ($botFirst) {
+            $this->notifySoloCombatEffect($botCard,   $side, $row,       $bRes, $botStr);
+            $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
+        } else {
+            $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
+            $this->notifySoloCombatEffect($botCard,   $side, $row,       $bRes, $botStr);
+        }
+
+        if ($pRes['vp_bonus'] > 0) {
+            $this->game->bga->playerScore->inc($pid, $pRes['vp_bonus']);
+        }
+        if ($bRes['vp_bonus'] > 0) {
+            $botScore = (int)($this->game->bga->globals->get('bot_score') ?? 0) + $bRes['vp_bonus'];
+            $this->game->bga->globals->set('bot_score', $botScore);
+            $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
+        }
+
+        return [$botStr, $bRes, $pStr, $pRes];
+    }
+
+    // Score one solo border (R-5.11) — called only once the whole row is resolved.
+    private function scoreSoloBorder(
+        int $botStr, array $bRes, int $pid, int $pStr, array $pRes,
+        int $botGridPos, int $playerPos, string $side, int $row
+    ): void {
+        $diff     = abs($botStr - $pStr);
+        $winnerId = null;
+        $bonusVp  = 0;
+
+        if ($botStr > $pStr) {
+            $winnerId = CardEffects::BOT_PLAYER_ID;
+            $botScore = (int)($this->game->bga->globals->get('bot_score') ?? 0) + $diff;
+            $this->game->bga->globals->set('bot_score', $botScore);
+            $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
+            $this->game->bga->playerStats->inc('combat_losses', 1, $pid);
+        } elseif ($pStr > $botStr) {
+            $winnerId = $pid;
+            $this->game->bga->playerScore->inc($pid, $diff);
+            $this->game->bga->playerStats->inc('combat_wins',   1,     $pid);
+            $this->game->bga->playerStats->inc('combat_points', $diff, $pid);
+        } else {
+            $this->game->bga->playerStats->inc('combat_ties', 1, $pid);
+        }
+
+        // After-combat bonus (Snake) — R-9.4: server-side BGA random
+        if ($winnerId !== null && ($bRes['after_combat'] || $pRes['after_combat'])) {
+            $bonusVp = bga_rand(1, 6);
+            if ($winnerId === CardEffects::BOT_PLAYER_ID) {
+                $botScore = (int)($this->game->bga->globals->get('bot_score') ?? 0) + $bonusVp;
+                $this->game->bga->globals->set('bot_score', $botScore);
+                $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
+            } else {
+                $this->game->bga->playerScore->inc($pid, $bonusVp);
+            }
+        }
+
+        if ($winnerId === $pid) {
+            $combatMsg  = clienttranslate('${player_name} wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
+            $combatPid  = $pid;
+            $combatName = $this->game->getPlayerNameById($pid);
+        } elseif ($winnerId === CardEffects::BOT_PLAYER_ID) {
+            $combatMsg  = clienttranslate('Bot wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
+            $combatPid  = 0;
+            $combatName = clienttranslate('Bot');
+        } else {
+            $combatMsg  = clienttranslate('Tie (${left_strength} vs ${right_strength})');
+            $combatPid  = 0;
+            $combatName = '';
+        }
+        $payload = [
+            'player_id'       => $combatPid,
+            'player_name'     => $combatName,
+            'left_player_id'  => CardEffects::BOT_PLAYER_ID,
+            'right_player_id' => $pid,
+            'left_position'   => $botGridPos,
+            'right_position'  => $playerPos,
+            'left_strength'   => $botStr,
+            'right_strength'  => $pStr,
+            'winner_id'       => $winnerId,
+            'combat_points'   => $diff,
+            'bonus_vp'        => $bonusVp,
+            'left_vp'         => $bRes['vp_bonus'],
+            'right_vp'        => $pRes['vp_bonus'],
+            'left_dice'       => $bRes['dice_roll'],
+            'right_dice'      => $pRes['dice_roll'],
+            'solo_combat'     => true,
+            'bot_side'        => $side,
+            'bot_row'         => $row,
+        ];
+        $this->game->bga->notify->all('combatResolved', $combatMsg, $payload);
+        $this->recordGaugeDiffHistory($payload);
+    }
+
+    private function getBotCard(string $side, int $row): ?array
+    {
+        $loc  = "bot_grid_{$side}";
+        $data = $this->game->getObjectFromDB(
+            "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg,
+                    card_family AS family, card_face_up AS face_up
+             FROM bc_card WHERE card_location = '{$loc}' AND card_location_arg = {$row}"
+        );
+        return !empty($data) ? $data : null;
+    }
 
     private function revealBotRow(int $row): void
     {
@@ -338,186 +581,6 @@ class RevealAndResolve extends GameState
         }
     }
 
-    private function resolveSoloCombats(array $playerOrder, int $row): void
-    {
-        $pid = (int)$playerOrder[0];
-
-        // Activation order: flank-left(=bot_grid_right) → col1 → col3 → flank-right(=bot_grid_left)
-        // JS inverts side for display: bot_grid_right → bc-flank-left, bot_grid_left → bc-flank-right
-        // Combat 1: bot_grid_right (shown left) vs col1 — bot activates first
-        $pLeftPos  = $row * 3 + 0;
-        $botLeft   = $this->getBotCard('right', $row);
-        $pLeftCard = $this->getCardAt($pid, $pLeftPos);
-        if ($botLeft !== null && $pLeftCard !== null && (int)$pLeftCard['face_up']) {
-            $this->resolveSoloCombat('right', $row, $botLeft, $pid, $pLeftPos, $pLeftCard, botFirst: true);
-        }
-
-        // Combat 2: col3 vs bot_grid_left (shown right) — player activates first
-        $pRightPos  = $row * 3 + 2;
-        $botRight   = $this->getBotCard('left', $row);
-        $pRightCard = $this->getCardAt($pid, $pRightPos);
-        if ($botRight !== null && $pRightCard !== null && (int)$pRightCard['face_up']) {
-            $this->resolveSoloCombat('left', $row, $botRight, $pid, $pRightPos, $pRightCard, botFirst: false);
-        }
-    }
-
-    private function resolveSoloCombat(
-        string $side, int $row,
-        array $botCard, int $pid, int $playerPos, array $playerCard,
-        bool $botFirst = true
-    ): void {
-        $botGridPos = CardEffects::botGridPos($side, $row);
-
-        if ($botFirst) {
-            // Bot activates first (left combat)
-            $bRes = CardEffects::applyBotEffect(
-                $botCard, $side, $row,
-                $playerCard, $pid, $playerPos,
-                $this->game
-            );
-            if ($bRes['rage_toggle'] !== null) {
-                $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
-            }
-
-            $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
-            $pRes = CardEffects::applyEffect(
-                $playerCard, $pid, $playerPos, 'combat',
-                $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos,
-                $this->game
-            );
-            if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
-                $this->broadcastGemUpdated($pid);
-            }
-        } else {
-            // Player activates first (right combat)
-            $gemsBeforeSolo = $this->game->gemsCharged->get($pid);
-            $pRes = CardEffects::applyEffect(
-                $playerCard, $pid, $playerPos, 'combat',
-                $botCard, CardEffects::BOT_PLAYER_ID, $botGridPos,
-                $this->game
-            );
-            if ($this->game->gemsCharged->get($pid) !== $gemsBeforeSolo) {
-                $this->broadcastGemUpdated($pid);
-            }
-
-            $bRes = CardEffects::applyBotEffect(
-                $botCard, $side, $row,
-                $playerCard, $pid, $playerPos,
-                $this->game
-            );
-            if ($bRes['rage_toggle'] !== null) {
-                $this->game->bga->notify->all('botRageUpdated', '', ['rage' => $bRes['rage_toggle']]);
-            }
-        }
-
-        // Re-read player card (Cabin Boy may have flipped face-down during effect)
-        $playerCard = $this->getCardAt($pid, $playerPos) ?? $playerCard;
-
-        $botStr = $this->calcBotStrength($side, $row, $botCard, $bRes);
-        $pStr   = $this->calcStrength($pid, $playerPos, $playerCard, $pRes);
-
-        // Announce combat sequence: start → effects (in activation order) → result
-        $this->notifyCombatStart(
-            CardEffects::BOT_PLAYER_ID, clienttranslate('Bot'),
-            CardEffects::getName((int)$botCard['type'],    (int)$botCard['type_arg']),
-            $pid, $this->game->getPlayerNameById($pid),
-            CardEffects::getName((int)$playerCard['type'], (int)$playerCard['type_arg'])
-        );
-        if ($botFirst) {
-            $this->notifySoloCombatEffect($botCard,   $side, $row,       $bRes, $botStr);
-            $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
-        } else {
-            $this->notifyCombatEffect($playerCard, $pid,  $playerPos, $pRes, $pStr);
-            $this->notifySoloCombatEffect($botCard,   $side, $row,       $bRes, $botStr);
-        }
-
-        $diff     = abs($botStr - $pStr);
-        $winnerId = null;
-        $bonusVp  = 0;
-
-        if ($botStr > $pStr) {
-            $winnerId = CardEffects::BOT_PLAYER_ID;
-            $botScore = (int)($this->game->bga->globals->get('bot_score') ?? 0) + $diff;
-            $this->game->bga->globals->set('bot_score', $botScore);
-            $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
-            $this->game->bga->playerStats->inc('combat_losses', 1, $pid);
-        } elseif ($pStr > $botStr) {
-            $winnerId = $pid;
-            $this->game->bga->playerScore->inc($pid, $diff);
-            $this->game->bga->playerStats->inc('combat_wins',   1,     $pid);
-            $this->game->bga->playerStats->inc('combat_points', $diff, $pid);
-        } else {
-            $this->game->bga->playerStats->inc('combat_ties', 1, $pid);
-        }
-
-        // After-combat bonus (Snake)
-        if ($winnerId !== null && ($bRes['after_combat'] || $pRes['after_combat'])) {
-            $bonusVp = rand(1, 6);
-            if ($winnerId === CardEffects::BOT_PLAYER_ID) {
-                $botScore = (int)($this->game->bga->globals->get('bot_score') ?? 0) + $bonusVp;
-                $this->game->bga->globals->set('bot_score', $botScore);
-                $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
-            } else {
-                $this->game->bga->playerScore->inc($pid, $bonusVp);
-            }
-        }
-
-        // Direct VP bonuses
-        if ($pRes['vp_bonus'] > 0) {
-            $this->game->bga->playerScore->inc($pid, $pRes['vp_bonus']);
-        }
-        if ($bRes['vp_bonus'] > 0) {
-            $botScore = (int)($this->game->bga->globals->get('bot_score') ?? 0) + $bRes['vp_bonus'];
-            $this->game->bga->globals->set('bot_score', $botScore);
-            $this->game->bga->notify->all('botScoreUpdated', '', ['score' => $botScore]);
-        }
-
-        if ($winnerId === $pid) {
-            $combatMsg  = clienttranslate('${player_name} wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
-            $combatPid  = $pid;
-            $combatName = $this->game->getPlayerNameById($pid);
-        } elseif ($winnerId === CardEffects::BOT_PLAYER_ID) {
-            $combatMsg  = clienttranslate('Bot wins ${combat_points} point(s) (${left_strength} vs ${right_strength})');
-            $combatPid  = 0;
-            $combatName = clienttranslate('Bot');
-        } else {
-            $combatMsg  = clienttranslate('Tie (${left_strength} vs ${right_strength})');
-            $combatPid  = 0;
-            $combatName = '';
-        }
-        $this->game->bga->notify->all('combatResolved', $combatMsg, [
-            'player_id'       => $combatPid,
-            'player_name'     => $combatName,
-            'left_player_id'  => CardEffects::BOT_PLAYER_ID,
-            'right_player_id' => $pid,
-            'left_position'   => $botGridPos,
-            'right_position'  => $playerPos,
-            'left_strength'   => $botStr,
-            'right_strength'  => $pStr,
-            'winner_id'       => $winnerId,
-            'combat_points'   => $diff,
-            'bonus_vp'        => $bonusVp,
-            'left_vp'         => $bRes['vp_bonus'],
-            'right_vp'        => $pRes['vp_bonus'],
-            'left_dice'       => $bRes['dice_roll'],
-            'right_dice'      => $pRes['dice_roll'],
-            'solo_combat'     => true,
-            'bot_side'        => $side,
-            'bot_row'         => $row,
-        ]);
-    }
-
-    private function getBotCard(string $side, int $row): ?array
-    {
-        $loc  = "bot_grid_{$side}";
-        $data = $this->game->getObjectFromDB(
-            "SELECT card_id AS id, card_type AS type, card_type_arg AS type_arg,
-                    card_family AS family, card_face_up AS face_up
-             FROM bc_card WHERE card_location = '{$loc}' AND card_location_arg = {$row}"
-        );
-        return !empty($data) ? $data : null;
-    }
-
     // Notify a single player card's combat effect (multiplayer and player side of solo).
     private function notifyCombatEffect(array $card, int $pid, int $pos, array $res, int $finalStrength): void
     {
@@ -527,8 +590,19 @@ class RevealAndResolve extends GameState
             ? clienttranslate('${player_name}\'s ${card_name}: ⚔ ${final_strength}')
             : clienttranslate('${player_name}\'s ${card_name}: ${effect_desc} → ⚔ ${final_strength}');
 
-        // Dice animation fires first so client shows the roll before seeing tokens or strength.
-        if (!empty($res['dice_roll'])) {
+        // Dice animation(s) fire first so client shows the roll(s) before seeing tokens or
+        // strength. Crazy 6 rolls once per token instead of a single die — dice_rolls (plural)
+        // carries every value, and notifications are delivered to the client in order, so
+        // firing one per roll here plays them one after another instead of a single animation.
+        if (!empty($res['dice_rolls'])) {
+            foreach ($res['dice_rolls'] as $roll) {
+                $this->game->bga->notify->all('combatDiceRolled', '', [
+                    'player_id' => $pid,
+                    'dice_roll' => (int)$roll,
+                    'position'  => $pos,
+                ]);
+            }
+        } elseif (!empty($res['dice_roll'])) {
             $this->game->bga->notify->all('combatDiceRolled', '', [
                 'player_id' => $pid,
                 'dice_roll' => (int)$res['dice_roll'],
@@ -555,7 +629,7 @@ class RevealAndResolve extends GameState
             'rage_toggle'    => $res['rage_toggle'] ?? null,
         ]);
 
-        // Cabin Boy (1:5) flips face-down when on a border — animate the flip on the client
+        // Freebooter (1:4) flips itself face-down when on a border — animate the flip on the client
         if ($res['card_flipped_face_down'] ?? false) {
             $this->game->bga->notify->all('cardFlippedFaceDown', '', [
                 'player_id' => $pid,
@@ -564,6 +638,31 @@ class RevealAndResolve extends GameState
                 'family'    => (int)$card['family'],
             ]);
         }
+
+        // Bombardier (2:13) flips a DIFFERENT card (the one below it) — same client handler,
+        // but for that other position, since it was never told about this flip otherwise (only
+        // silently updated server-side in the DB) and stayed visually face-up until a fresh F5.
+        if (!empty($res['flipped_below'])) {
+            $this->game->bga->notify->all('cardFlippedFaceDown', '', [
+                'player_id' => $pid,
+                'card_id'   => null,
+                'position'  => (int)$res['flipped_below']['position'],
+                'family'    => (int)$res['flipped_below']['family'],
+            ]);
+        }
+
+        $this->trackPowerMax($pid, $finalStrength);
+
+        $this->recordEffectBadge([
+            'badge_kind'     => 'combat',
+            'player_id'      => $pid,
+            'position'       => $pos,
+            'effect_desc'    => $desc,
+            'final_strength' => $finalStrength,
+            'solo_combat'    => false,
+            'bot_side'       => null,
+            'bot_row'        => null,
+        ]);
     }
 
     // Notify a bot card's combat effect (solo mode only).
@@ -592,6 +691,68 @@ class RevealAndResolve extends GameState
             'bot_side'       => $side,
             'bot_row'        => $row,
         ]);
+
+        $this->recordEffectBadge([
+            'badge_kind'     => 'combat',
+            'player_id'      => CardEffects::BOT_PLAYER_ID,
+            'position'       => $botGridPos,
+            'effect_desc'    => $desc,
+            'final_strength' => $finalStrength,
+            'solo_combat'    => true,
+            'bot_side'       => $side,
+            'bot_row'        => $row,
+        ]);
+    }
+
+    // Append one badge record to the round's persisted list (survives a page reload —
+    // see Game::getAllDatas 'effect_badges' — cleared at Upgrade entry alongside tokens).
+    private function recordEffectBadge(array $data): void
+    {
+        $badges   = (array)($this->game->bga->globals->get('effect_badges') ?? []);
+        $badges[] = $data;
+        $this->game->bga->globals->set('effect_badges', $badges);
+    }
+
+    // Append one resolved combat's payload to the round's gauge-diff history (survives a
+    // page reload — see Game::getAllDatas 'gauge_diff_history' — cleared at Upgrade entry
+    // alongside tokens/effect_badges). Stores the exact combatResolved notify payload so the
+    // client can replay it through the same _recordGaugeDiffLine() the live handler uses.
+    private function recordGaugeDiffHistory(array $payload): void
+    {
+        $history   = (array)($this->game->bga->globals->get('gauge_diff_history') ?? []);
+        $history[] = $payload;
+        $this->game->bga->globals->set('gauge_diff_history', $history);
+    }
+
+    // "power_max" (highest power reached) — only meaningful for a real seated player, so
+    // only called from notifyCombatEffect (never notifySoloCombatEffect, the bot's side).
+    private function trackPowerMax(int $pid, int $finalStrength): void
+    {
+        $current = (int)($this->game->bga->playerStats->get('power_max', $pid) ?? 0);
+        if ($finalStrength > $current) {
+            $this->game->bga->playerStats->set('power_max', $finalStrength, $pid);
+        }
+    }
+
+    // "points per faction" table stats — scoped to direct VP-bonus card effects only (e.g.
+    // Werewolf +3VP, Lady Fortune +1VP/gold card), not border-combat win margins: a combat
+    // margin is a difference between two cards (possibly two different families) and isn't
+    // unambiguously "earned by" either one, whereas a vp_bonus is generated by exactly one
+    // named card's own effect.
+    private function addFactionPoints(int $family, int $amount): void
+    {
+        if ($amount <= 0) {
+            return;
+        }
+        $statName = match ($family) {
+            Game::FAMILY_GAMBLER => 'points_gambler',
+            Game::FAMILY_BRUTE   => 'points_brute',
+            Game::FAMILY_PIRATE  => 'points_pirate',
+            default              => null,
+        };
+        if ($statName !== null) {
+            $this->game->bga->tableStats->inc($statName, $amount);
+        }
     }
 
     private function getPlayerColor(int $pid): string
@@ -621,8 +782,10 @@ class RevealAndResolve extends GameState
     ): void {
         $leftColor  = $this->getPlayerColor($leftPid);
         $rightColor = $this->getPlayerColor($rightPid);
-        $this->game->bga->notify->all('combatStarted',
-            clienttranslate('${left_player_name}\'s ${left_card_name} vs ${right_player_name}\'s ${right_card_name}'),
+        // Message left blank on purpose: the "PlayerA's Card vs PlayerB's Card" log-panel
+        // entry was noise the user asked to remove — the notify itself still fires (client
+        // uses it purely for pacing, see notif_combatStarted), only the log text is gone.
+        $this->game->bga->notify->all('combatStarted', '',
             [
                 'left_player_id'    => $leftPid,
                 'left_player_name'  => $this->coloredName($leftName,      $leftColor),
@@ -642,6 +805,6 @@ class RevealAndResolve extends GameState
         $botGridPos = CardEffects::botGridPos($side, $row);
         $base   = CardEffects::getBotBaseForce((int)$botCard['type'], (int)$botCard['type_arg']);
         $tokens = CardEffects::getBotTokenBonus($botGridPos, $this->game);
-        return max(0, $base + $tokens + (int)$res['strength_bonus']);
+        return max(0, min(20, $base + $tokens + (int)$res['strength_bonus']));
     }
 }
